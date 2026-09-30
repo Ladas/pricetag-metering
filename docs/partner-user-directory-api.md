@@ -14,6 +14,16 @@ corresponding secret is not configured.
 | API | Environment variable | Deployment secret |
 |---|---|---|
 | User directory and key issuance | `USER_MANAGEMENT_API_SECRET` | `metering-user-management-api` (`token`) |
+
+Key endpoints additionally require `PARTNER_USER_KEY_GROUP`, the MaaS group
+presented on every key operation. There is no default: the group must exist in
+MaaS with an accessible subscription, and until it is configured the key
+endpoints (list, mint, revoke, deactivate) answer `503`. Its value is an
+operator decision tracked in PriceTag #31 (SSO is the canonical group source).
+
+Callers sharing one credential may send `X-Partner-Client: <name>`
+(`[a-z0-9._-]`, ≤32 chars) so audit rows distinguish, for example, `atlas`
+from `aibh-refresh`.
 | Batch usage report | `USAGE_REPORT_API_SECRET` | `metering-partner-api` (`usage-report`) |
 | Model allowlist | `MODEL_POLICY_API_SECRET` | `metering-partner-api` (`model-policy`) |
 
@@ -84,8 +94,12 @@ POST /api/v1/users
 
 Returns `201 Created`, `Location: /api/v1/users/{user_id}`, and the created
 record. Creating the record also links `tags.email` to the stable UUID for
-usage attribution and syncs the first/last name into the PriceTag dashboard
-profile.
+usage attribution and fills the first/last name into the PriceTag dashboard
+profile when none is set there (a name an admin already entered is never
+overwritten). The MaaS username is stored exactly as the email was sent —
+case is preserved — while email uniqueness across users is case-insensitive.
+Partner users are not added to the dashboard's People & Org directory; group
+membership there remains an admin action.
 
 ### Read or search
 
@@ -161,13 +175,15 @@ DELETE /api/v1/users/{user_id}
 
 Deletion is a soft deactivation: tags and login history remain stored. Metering
 first disables future key issuance and forces the model policy to deny all,
-then asks MaaS to revoke keys for every current and historical login. The
-model-policy denial is enforced on inference only when the Praxis model-policy
-preflight is enabled; successful MaaS revocation is the completion criterion.
-A successful response is:
+then revokes **every key minted through this API** for the user, one by one,
+as the key's owner. Keys the user obtained elsewhere (PriceTag dashboard,
+MaaS directly) are deliberately left untouched: this API only manages what it
+issued. The model-policy denial is enforced on inference only when the Praxis
+model-policy preflight is enabled; successful revocation of the partner-minted
+keys is the completion criterion. A successful response is:
 
 ```json
-{"user_id":"123e4567-e89b-12d3-a456-426614174000","active":false,"keys_revoked":true}
+{"user_id":"123e4567-e89b-12d3-a456-426614174000","active":false,"keys_revoked":1}
 ```
 
 If MaaS revocation fails, the API returns `502` and leaves the user inactive
@@ -179,9 +195,10 @@ history and allows new key issuance.
 
 ## MaaS keys
 
-Metering does not store keys; MaaS remains the system of record. These
-endpoints act on MaaS **as the user's own login**, so they need no MaaS admin
-privileges and can never touch another user's keys.
+MaaS remains the system of record for keys; Metering records only the **ids**
+of keys it minted (never the secret) so it can later revoke exactly those.
+These endpoints act on MaaS **as the user's own login**, so they need no MaaS
+admin privileges and can never touch another user's keys.
 
 ### List a user's keys
 
@@ -191,7 +208,8 @@ GET /api/v1/users/{user_id}/keys
 
 Returns `{"user_id": ..., "keys": [...]}` with MaaS key metadata (id, name,
 status, subscription, creation/expiration/last-used dates) for every login
-ever mapped to the user. Plaintext keys are never included.
+ever mapped to the user, each with `partner_managed: true|false` indicating
+whether this API minted it. Plaintext keys are never included.
 
 ### Revoke one key
 
@@ -199,9 +217,10 @@ ever mapped to the user. Plaintext keys are never included.
 DELETE /api/v1/users/{user_id}/keys/{key_id}
 ```
 
-Returns `{"user_id": ..., "key_id": ..., "status": "revoked"}`. A key that
-does not belong to this user (or does not exist) returns `404`; MaaS does not
-distinguish the two cases, by design.
+Only keys minted through this API can be revoked here; the call is
+idempotent. Returns `{"user_id": ..., "key_id": ..., "status": "revoked"}`. A
+key that this API did not mint for this user (including the user's dashboard
+keys, and unknown ids) returns `404`.
 
 ### Mint a key
 
@@ -220,9 +239,16 @@ group. A missing/inaccessible subscription makes MaaS reject key minting and
 Metering returns `502`.
 
 The response is MaaS's created API-key record and includes the raw key exactly
-once. It is not stored or logged by Metering. The response has
+once. Metering stores the key id, owner login and name (for later revocation)
+but never the secret, and never logs it. The response has
 `Cache-Control: no-store`; the client must persist the returned `key` securely
 at once. The requested key `name` is required and limited to 128 characters.
+
+Mints are bounded to a few in flight per Metering replica; beyond that the
+API answers `429` with `Retry-After`. Metering holds no database connection
+while waiting on MaaS. If the user is deactivated while a mint is in flight,
+or the mint cannot be recorded, the freshly minted key is revoked again and
+the call fails (`409` / `500`) — a key is only ever returned once it is tracked.
 
 ## Batch usage report
 
@@ -295,7 +321,12 @@ read-only and does not create quota-denial records.
 
 ## Per-user model allowlist
 
-Policies now use the stable UUID rather than an email/MaaS username:
+> **Breaking change.** Before this revision the path segment was the MaaS
+> username (email). It is now the stable UUID; an email in the path returns
+> `400`. No username-keyed policies had been created in any environment when
+> this changed, and legacy rows, if any, remain enforced read-only.
+
+Policies use the stable UUID rather than an email/MaaS username:
 
 ```http
 GET    /api/v1/model-policies/users/{user_id}/allowlist
@@ -340,8 +371,9 @@ whiteboard directly.
 | `401` | Missing or incorrect bearer credential |
 | `404` | Unknown user UUID |
 | `409` | Duplicate ID/email, inactive user, or operation conflict |
+| `429` | Too many concurrent key mints on this replica; honour `Retry-After` |
 | `502` | MaaS key mint or key revocation failed |
-| `503` | Endpoint credential is not configured |
+| `503` | Endpoint credential or `PARTNER_USER_KEY_GROUP` is not configured |
 | `500` | Metering database or internal operation failed |
 
 All API responses use `Cache-Control: no-store`. Keep the routes behind HTTPS

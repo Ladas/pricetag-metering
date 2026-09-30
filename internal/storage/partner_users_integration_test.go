@@ -70,9 +70,21 @@ func TestPartnerUserDirectoryPolicyAndHistoricalUsage(t *testing.T) {
 		t.Fatalf("historical usage report = %#v", report)
 	}
 
+	if err := s.RecordPartnerUserKey(ctx, "partner-m2m", id, "key-old", "alice@example.com", "old"); err != nil {
+		t.Fatalf("RecordPartnerUserKey: %v", err)
+	}
+	if err := s.RecordPartnerUserKey(ctx, "partner-m2m", id, "key-new", "alice.new@example.com", "new"); err != nil {
+		t.Fatalf("RecordPartnerUserKey: %v", err)
+	}
+	if err := s.MarkPartnerUserKeyRevoked(ctx, "partner-m2m", id, "key-old"); err != nil {
+		t.Fatalf("MarkPartnerUserKeyRevoked: %v", err)
+	}
 	deletion, err := s.BeginPartnerUserDeactivation(ctx, "partner-m2m", id)
-	if err != nil || len(deletion.Usernames) != 2 {
-		t.Fatalf("BeginPartnerUserDeactivation = %#v, err %v", deletion, err)
+	if err != nil || len(deletion.Keys) != 1 || deletion.Keys[0].KeyID != "key-new" || deletion.Keys[0].Username != "alice.new@example.com" {
+		t.Fatalf("BeginPartnerUserDeactivation must list only unrevoked partner keys: %#v, err %v", deletion, err)
+	}
+	if err := s.RecordPartnerUserKey(ctx, "partner-m2m", id, "key-late", "alice.new@example.com", "late"); !errors.Is(err, ErrPartnerUserInactive) {
+		t.Fatalf("recording a key for a deactivated user = %v, want inactive", err)
 	}
 	blocked, err := s.GetUserModelAllowlist(ctx, "alice@example.com")
 	if err != nil || !blocked.Enabled || len(blocked.Models) != 0 {

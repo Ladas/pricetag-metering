@@ -28,9 +28,13 @@ func TestPartnerUserAPIEndToEnd(t *testing.T) {
 	}
 	store := openFreshStore(t, dsn)
 
+	// MaaS stand-in: an in-memory key store keyed by id with an owner. It
+	// starts with a key Alice obtained through the dashboard (not via this
+	// API) so the test can prove partner deactivation leaves it alone.
 	var mu sync.Mutex
-	var minted []string
-	var revoked []string
+	type fakeKey struct{ owner, status string }
+	maasKeys := map[string]*fakeKey{"dash-1": {owner: "alice@example.com", status: "active"}}
+	nextKey := 0
 	failRevoke := true
 	maas := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
@@ -38,60 +42,56 @@ func TestPartnerUserAPIEndToEnd(t *testing.T) {
 		if r.Header.Get("X-MaaS-Group") != `["GE"]` {
 			t.Errorf("MaaS group header = %q, want [\"GE\"]", r.Header.Get("X-MaaS-Group"))
 		}
-		switch r.URL.Path {
-		case "/v1/api-keys":
-			minted = append(minted, r.Header.Get("X-MaaS-Username"))
+		caller := r.Header.Get("X-MaaS-Username")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/api-keys":
+			nextKey++
+			id := fmt.Sprintf("key-%d", nextKey)
+			maasKeys[id] = &fakeKey{owner: caller, status: "active"}
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "key-1", "name": "n", "key": "sk-test-secret", "username": r.Header.Get("X-MaaS-Username"), "status": "active"})
-		case "/v1/api-keys/search":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "name": "n", "key": "sk-test-secret-" + id, "username": caller, "status": "active"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/api-keys/search":
 			var body struct {
 				Filters struct {
 					Username string `json:"username"`
 				} `json:"filters"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
-			if body.Filters.Username != r.Header.Get("X-MaaS-Username") {
-				t.Errorf("key search must be self-scoped: filter %q header %q", body.Filters.Username, r.Header.Get("X-MaaS-Username"))
+			if body.Filters.Username != caller {
+				t.Errorf("key search must be self-scoped: filter %q header %q", body.Filters.Username, caller)
 			}
 			data := []map[string]any{}
-			for _, owner := range minted {
-				if owner == body.Filters.Username {
-					data = append(data, map[string]any{"id": "key-1", "name": "primary", "username": owner, "status": "active"})
+			for id, k := range maasKeys {
+				if k.owner == caller {
+					data = append(data, map[string]any{"id": id, "username": k.owner, "status": k.status})
 				}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": data, "has_more": false})
-		case "/v1/api-keys/key-1":
-			if r.Method != http.MethodDelete {
-				w.WriteHeader(http.StatusMethodNotAllowed)
-				return
-			}
-			if r.Header.Get("X-MaaS-Username") != "alice@example.com" {
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1/api-keys/"):
+			id := strings.TrimPrefix(r.URL.Path, "/v1/api-keys/")
+			k, ok := maasKeys[id]
+			if !ok || k.owner != caller { // MaaS hides other owners' keys
 				w.WriteHeader(http.StatusNotFound)
 				return
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "key-1", "status": "revoked"})
-		case "/v1/api-keys/key-other":
-			w.WriteHeader(http.StatusNotFound)
-		case "/v1/api-keys/bulk-revoke":
-			var body map[string]string
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			if body["username"] != r.Header.Get("X-MaaS-Username") {
-				t.Errorf("bulk revoke must be self-scoped: body %q header %q", body["username"], r.Header.Get("X-MaaS-Username"))
 			}
 			if failRevoke {
 				w.WriteHeader(http.StatusBadGateway)
 				return
 			}
-			revoked = append(revoked, body["username"])
-			_ = json.NewEncoder(w).Encode(map[string]any{"revokedCount": 1})
+			k.status = "revoked"
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "status": "revoked"})
+		case r.URL.Path == "/v1/api-keys/bulk-revoke":
+			t.Errorf("partner API must never bulk-revoke a username")
+			w.WriteHeader(http.StatusForbidden)
 		default:
 			t.Errorf("unexpected MaaS call %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 	defer maas.Close()
+	statusOf := func(id string) string { mu.Lock(); defer mu.Unlock(); return maasKeys[id].status }
 
-	users := NewPartnerUsersHandler(store, maasapi.NewClient(maas.URL, "tenant"))
+	users := NewPartnerUsersHandler(store, maasapi.NewClient(maas.URL, "tenant"), "GE")
 	usage := NewPartnerUserUsageHandler(store)
 	policy := NewUserModelPolicyHandler(store)
 	mux := http.NewServeMux()
@@ -143,23 +143,40 @@ func TestPartnerUserAPIEndToEnd(t *testing.T) {
 		t.Fatalf("unsupported query = %d %v", code, out)
 	}
 
-	if code, out := do(http.MethodPost, "/api/v1/users/"+alice+"/keys", map[string]any{"name": "primary"}); code != http.StatusOK || out["key"] != "sk-test-secret" {
+	if code, out := do(http.MethodPost, "/api/v1/users/"+alice+"/keys", map[string]any{"name": "primary"}); code != http.StatusOK || out["key"] != "sk-test-secret-key-1" {
 		t.Fatalf("mint = %d %v", code, out)
 	}
-	mu.Lock()
-	if len(minted) != 1 || minted[0] != "alice@example.com" {
-		t.Fatalf("minted usernames = %v", minted)
+	if code, out := do(http.MethodPost, "/api/v1/users/"+alice+"/keys", map[string]any{"name": "second"}); code != http.StatusOK || out["id"] != "key-2" {
+		t.Fatalf("second mint = %d %v", code, out)
 	}
-	mu.Unlock()
-	if code, out := do(http.MethodGet, "/api/v1/users/"+alice+"/keys", nil); code != http.StatusOK || len(out["keys"].([]any)) != 1 {
+	code, out := do(http.MethodGet, "/api/v1/users/"+alice+"/keys", nil)
+	if code != http.StatusOK || len(out["keys"].([]any)) != 3 {
 		t.Fatalf("key list = %d %v", code, out)
 	}
-	if code, out := do(http.MethodDelete, "/api/v1/users/"+alice+"/keys/key-other", nil); code != http.StatusNotFound {
-		t.Fatalf("revoke key not owned = %d %v, want 404", code, out)
+	for _, raw := range out["keys"].([]any) {
+		k := raw.(map[string]any)
+		if _, leaked := k["key"]; leaked {
+			t.Fatalf("key list must never carry a secret: %v", k)
+		}
+		if managed := k["partner_managed"] == true; managed != (k["id"] != "dash-1") {
+			t.Fatalf("partner_managed flag wrong for %v", k)
+		}
 	}
-	if code, out := do(http.MethodDelete, "/api/v1/users/"+alice+"/keys/key-1", nil); code != http.StatusOK || out["status"] != "revoked" {
+	if code, _ := do(http.MethodDelete, "/api/v1/users/"+alice+"/keys/dash-1", nil); code != http.StatusNotFound {
+		t.Fatalf("revoking a dashboard key through the partner API = %d, want 404", code)
+	}
+	mu.Lock()
+	failRevoke = false
+	mu.Unlock()
+	if code, out := do(http.MethodDelete, "/api/v1/users/"+alice+"/keys/key-2", nil); code != http.StatusOK || out["status"] != "revoked" {
 		t.Fatalf("revoke own key = %d %v", code, out)
 	}
+	if statusOf("key-2") != "revoked" || statusOf("dash-1") != "active" {
+		t.Fatalf("MaaS state after single revoke: key-2=%s dash-1=%s", statusOf("key-2"), statusOf("dash-1"))
+	}
+	mu.Lock()
+	failRevoke = true
+	mu.Unlock()
 
 	// PUT is an upsert: unknown UUID is created (201), known UUID replaced (200).
 	if code, out := do(http.MethodPut, "/api/v1/users/"+bob, map[string]any{"tags": map[string]any{"email": "bob@example.com", "first_name": "Bob", "last_name": "Example"}}); code != http.StatusCreated || out["active"] != true {
@@ -168,8 +185,8 @@ func TestPartnerUserAPIEndToEnd(t *testing.T) {
 	if code, out := do(http.MethodPut, "/api/v1/users/"+bob, map[string]any{"tags": map[string]any{"email": "bob@example.com", "first_name": "Robert", "last_name": "Example"}}); code != http.StatusOK || out["tags"].(map[string]any)["first_name"] != "Robert" {
 		t.Fatalf("upsert replace = %d %v", code, out)
 	}
-	if code, _ := do(http.MethodDelete, "/api/v1/users/"+bob, nil); code != http.StatusBadGateway {
-		t.Fatalf("bob delete with MaaS failure = %d, want 502", code)
+	if code, out := do(http.MethodDelete, "/api/v1/users/"+bob, nil); code != http.StatusOK || out["keys_revoked"].(float64) != 0 {
+		t.Fatalf("bob delete (no partner keys) = %d %v", code, out)
 	}
 
 	if err := store.InsertEvent(t.Context(), storage.UsageEvent{
@@ -179,7 +196,7 @@ func TestPartnerUserAPIEndToEnd(t *testing.T) {
 		t.Fatalf("seed usage: %v", err)
 	}
 	report := map[string]any{"user_ids": []string{alice, carol}, "from": time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339), "to": time.Now().UTC().Format(time.RFC3339)}
-	code, out := do(http.MethodPost, "/api/v1/usage/reports", report)
+	code, out = do(http.MethodPost, "/api/v1/usage/reports", report)
 	if code != http.StatusOK {
 		t.Fatalf("report = %d %v", code, out)
 	}
@@ -224,14 +241,12 @@ func TestPartnerUserAPIEndToEnd(t *testing.T) {
 	mu.Lock()
 	failRevoke = false
 	mu.Unlock()
-	if code, out := do(http.MethodDelete, "/api/v1/users/"+alice, nil); code != http.StatusOK || out["keys_revoked"] != true {
+	if code, out := do(http.MethodDelete, "/api/v1/users/"+alice, nil); code != http.StatusOK || out["keys_revoked"].(float64) != 1 {
 		t.Fatalf("delete retry = %d %v", code, out)
 	}
-	mu.Lock()
-	if strings.Join(revoked, ",") != "alice@example.com" {
-		t.Fatalf("revoked usernames = %v", revoked)
+	if statusOf("key-1") != "revoked" || statusOf("dash-1") != "active" {
+		t.Fatalf("deactivation must revoke only partner-minted keys: key-1=%s dash-1=%s", statusOf("key-1"), statusOf("dash-1"))
 	}
-	mu.Unlock()
 	if code, out := do(http.MethodGet, "/api/v1/model-policies/users/"+alice+"/allowlist", nil); code != http.StatusOK || out["enabled"] != true || len(out["models"].([]any)) != 0 {
 		t.Fatalf("inactive policy must be deny-all: %d %v", code, out)
 	}

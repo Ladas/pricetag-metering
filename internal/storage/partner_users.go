@@ -63,11 +63,11 @@ type PartnerUserModelAllowlist struct {
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
 }
 
-// PartnerUserDeletion contains the durable inactive state and all historical
-// MaaS usernames whose keys must be revoked before deletion is complete.
+// PartnerUserDeletion contains the durable inactive state and the
+// partner-minted keys that must be revoked before deletion is complete.
 type PartnerUserDeletion struct {
-	UserID    string
-	Usernames []string
+	UserID string
+	Keys   []PartnerUserKey
 }
 
 func (s *Store) migratePartnerUsers(ctx context.Context) error {
@@ -93,6 +93,19 @@ func (s *Store) migratePartnerUsers(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS partner_user_logins_user_idx ON partner_user_logins (user_id)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS partner_user_logins_one_current ON partner_user_logins (user_id) WHERE is_current`,
+		// Keys minted through the partner API. Deactivation revokes exactly
+		// these; keys a user obtained through the dashboard or MaaS directly
+		// are never touched by partner operations.
+		`CREATE TABLE IF NOT EXISTS partner_user_keys (
+			key_id TEXT PRIMARY KEY,
+			user_id UUID NOT NULL REFERENCES partner_users(user_id),
+			username TEXT NOT NULL,
+			name TEXT NOT NULL,
+			created_by TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			revoked_at TIMESTAMPTZ
+		)`,
+		`CREATE INDEX IF NOT EXISTS partner_user_keys_user_idx ON partner_user_keys (user_id)`,
 		`CREATE TABLE IF NOT EXISTS partner_user_model_allowlists (
 			user_id UUID PRIMARY KEY REFERENCES partner_users(user_id),
 			models TEXT[] NOT NULL DEFAULT '{}',
@@ -204,11 +217,94 @@ func (s *Store) GetPartnerUser(ctx context.Context, userID string) (PartnerUser,
 	return user, err
 }
 
-// WithActivePartnerUser serializes a MaaS key mint against tag updates and
-// deactivation by holding the user row lock for the duration of fn. Thus a
-// deactivation that follows a successful mint will always see and revoke that
-// key, and a mint cannot start after deactivation has committed.
-func (s *Store) WithActivePartnerUser(ctx context.Context, userID string, fn func(PartnerUser) error) error {
+// GetActivePartnerUser is the pre-mint check. It deliberately takes no lock:
+// the mint itself is an outbound HTTP call and must not pin a pool connection.
+func (s *Store) GetActivePartnerUser(ctx context.Context, userID string) (PartnerUser, error) {
+	user, err := s.GetPartnerUser(ctx, userID)
+	if err != nil {
+		return PartnerUser{}, err
+	}
+	if !user.Active || user.KeyRevocationPending {
+		return PartnerUser{}, ErrPartnerUserInactive
+	}
+	return user, nil
+}
+
+// PartnerUserKey is a key minted through the partner API.
+type PartnerUserKey struct {
+	KeyID     string     `json:"key_id"`
+	UserID    string     `json:"user_id"`
+	Username  string     `json:"username"`
+	Name      string     `json:"name"`
+	CreatedAt time.Time  `json:"created_at"`
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+}
+
+// RecordPartnerUserKey stores a freshly minted key in one short transaction
+// that re-checks the user under the row lock. ErrPartnerUserInactive means the
+// user was deactivated while the mint was in flight; the caller must revoke
+// the key it just received.
+func (s *Store) RecordPartnerUserKey(ctx context.Context, actor, userID, keyID, username, name string) error {
+	id, err := normalizePartnerUserID(userID)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(keyID) == "" {
+		return fmt.Errorf("%w: MaaS returned no key id", ErrInvalidPartnerUser)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var active, revocationPending bool
+	if err := tx.QueryRowContext(ctx, `SELECT active,key_revocation_pending FROM partner_users WHERE user_id=$1 FOR UPDATE`, id).Scan(&active, &revocationPending); errors.Is(err, sql.ErrNoRows) {
+		return ErrPartnerUserNotFound
+	} else if err != nil {
+		return err
+	}
+	if !active || revocationPending {
+		return ErrPartnerUserInactive
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO partner_user_keys (key_id,user_id,username,name,created_by) VALUES ($1,$2,$3,$4,$5)`, keyID, id, username, name, actor); err != nil {
+		return fmt.Errorf("record partner key: %w", err)
+	}
+	if err := s.auditTx(ctx, tx, actor, "partner_user.key_mint", id, map[string]any{"key_id": keyID, "name": name}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ListPartnerUserKeys returns the keys minted through the partner API for a
+// user, most recent first, including revoked ones.
+func (s *Store) ListPartnerUserKeys(ctx context.Context, userID string) ([]PartnerUserKey, error) {
+	id, err := normalizePartnerUserID(userID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT key_id,user_id::text,username,name,created_at,revoked_at FROM partner_user_keys WHERE user_id=$1 ORDER BY created_at DESC,key_id`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	keys := []PartnerUserKey{}
+	for rows.Next() {
+		var k PartnerUserKey
+		var revoked sql.NullTime
+		if err := rows.Scan(&k.KeyID, &k.UserID, &k.Username, &k.Name, &k.CreatedAt, &revoked); err != nil {
+			return nil, err
+		}
+		if revoked.Valid {
+			t := revoked.Time
+			k.RevokedAt = &t
+		}
+		keys = append(keys, k)
+	}
+	return keys, rows.Err()
+}
+
+// MarkPartnerUserKeyRevoked records that MaaS has revoked a tracked key.
+func (s *Store) MarkPartnerUserKeyRevoked(ctx context.Context, actor, userID, keyID string) error {
 	id, err := normalizePartnerUserID(userID)
 	if err != nil {
 		return err
@@ -218,17 +314,14 @@ func (s *Store) WithActivePartnerUser(ctx context.Context, userID string, fn fun
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	user, err := scanPartnerUser(tx.QueryRowContext(ctx, partnerUserSelect+` WHERE p.user_id=$1 FOR UPDATE`, id))
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrPartnerUserNotFound
-	}
+	result, err := tx.ExecContext(ctx, `UPDATE partner_user_keys SET revoked_at=COALESCE(revoked_at,NOW()) WHERE key_id=$1 AND user_id=$2`, keyID, id)
 	if err != nil {
 		return err
 	}
-	if !user.Active || user.KeyRevocationPending {
-		return ErrPartnerUserInactive
+	if n, _ := result.RowsAffected(); n == 0 {
+		return ErrPartnerUserNotFound
 	}
-	if err := fn(user); err != nil {
+	if err := s.auditTx(ctx, tx, actor, "partner_user.key_revoke", id, map[string]any{"key_id": keyID}); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -366,12 +459,15 @@ func syncPartnerUserProfiles(ctx context.Context, tx *sql.Tx, userID string, fir
 	if err := rows.Close(); err != nil {
 		return err
 	}
+	// Fill-only, like the roster import: a display name an admin already set
+	// in the dashboard is never overwritten by partner tag updates.
 	for _, username := range usernames {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO user_profiles (username, first_name, last_name, updated_at)
 			VALUES ($1,$2,$3,NOW())
 			ON CONFLICT (username) DO UPDATE SET
-				first_name=EXCLUDED.first_name, last_name=EXCLUDED.last_name, updated_at=NOW()`,
+				first_name=EXCLUDED.first_name, last_name=EXCLUDED.last_name, updated_at=NOW()
+			WHERE user_profiles.first_name = '' AND user_profiles.last_name = ''`,
 			username, firstName, lastName); err != nil {
 			return fmt.Errorf("sync dashboard profile for %s: %w", username, err)
 		}
@@ -585,30 +681,27 @@ func (s *Store) BeginPartnerUserDeactivation(ctx context.Context, actor, userID 
 			return PartnerUserDeletion{}, err
 		}
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT username FROM partner_user_logins WHERE user_id=$1 ORDER BY username`, id)
+	rows, err := tx.QueryContext(ctx, `SELECT key_id,username,name,created_at FROM partner_user_keys WHERE user_id=$1 AND revoked_at IS NULL ORDER BY created_at,key_id`, id)
 	if err != nil {
 		return PartnerUserDeletion{}, err
 	}
-	var usernames []string
+	keys := []PartnerUserKey{}
 	for rows.Next() {
-		var username string
-		if err := rows.Scan(&username); err != nil {
+		k := PartnerUserKey{UserID: id}
+		if err := rows.Scan(&k.KeyID, &k.Username, &k.Name, &k.CreatedAt); err != nil {
 			rows.Close()
 			return PartnerUserDeletion{}, err
 		}
-		usernames = append(usernames, username)
+		keys = append(keys, k)
 	}
 	if err := rows.Close(); err != nil {
 		return PartnerUserDeletion{}, err
-	}
-	if len(usernames) == 0 {
-		return PartnerUserDeletion{}, fmt.Errorf("%w: user has no MaaS login mappings", ErrInvalidPartnerUser)
 	}
 	if err := tx.Commit(); err != nil {
 		return PartnerUserDeletion{}, err
 	}
 	s.invalidateQuotaCache()
-	return PartnerUserDeletion{UserID: id, Usernames: usernames}, nil
+	return PartnerUserDeletion{UserID: id, Keys: keys}, nil
 }
 
 func (s *Store) CompletePartnerUserKeyRevocation(ctx context.Context, actor, userID string) error {
