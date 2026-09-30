@@ -1056,6 +1056,9 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.migrateUserModelPolicy(ctx); err != nil {
 		return err
 	}
+	if err := s.migratePartnerUsers(ctx); err != nil {
+		return err
+	}
 	slog.Info("database migrations complete")
 	return nil
 }

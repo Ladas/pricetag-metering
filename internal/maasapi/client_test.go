@@ -2,6 +2,9 @@ package maasapi
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -29,5 +32,46 @@ func TestClientRefusesGrouplessCalls(t *testing.T) {
 		if !strings.Contains(err.Error(), "no groups") {
 			t.Fatalf("%s: error %q should name the missing groups, not leak a transport/auth error", tc.name, err)
 		}
+	}
+}
+
+func TestBulkRevokeAPIKeysUsesUserScopedRequest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/api-keys/bulk-revoke" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("X-MaaS-Username"); got != "alice@example.com" {
+			t.Errorf("X-MaaS-Username = %q, want alice@example.com", got)
+		}
+		if got := r.Header.Get("X-MaaS-Group"); got != `["GE"]` {
+			t.Errorf("X-MaaS-Group = %q, want [\"GE\"]", got)
+		}
+		if got := r.Header.Get("X-MaaS-Tenant"); got != "test-tenant" {
+			t.Errorf("X-MaaS-Tenant = %q, want test-tenant", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Errorf("Authorization = %q, want no admin bearer", got)
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		if body["username"] != "alice@example.com" {
+			t.Errorf("username = %q, want alice@example.com", body["username"])
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "test-tenant")
+	if err := c.BulkRevokeAPIKeys(context.Background(), " alice@example.com ", "GE"); err != nil {
+		t.Fatalf("BulkRevokeAPIKeys() error = %v", err)
+	}
+}
+
+func TestBulkRevokeAPIKeysRejectsMissingScope(t *testing.T) {
+	c := NewClient("http://127.0.0.1:1", "test-tenant")
+	if err := c.BulkRevokeAPIKeys(context.Background(), "", "GE"); err == nil {
+		t.Fatal("BulkRevokeAPIKeys with no username should fail locally")
 	}
 }

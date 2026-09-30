@@ -178,6 +178,8 @@ func main() {
 	orgHandler := handler.NewOrgHandler(store, cfg, maasClient)
 	quotaHandler := handler.NewQuotaHandler(store, cfg)
 	usageReportHandler := handler.NewUsageReportHandler(store)
+	partnerUsersHandler := handler.NewPartnerUsersHandler(store, maasClient)
+	partnerUserUsageHandler := handler.NewPartnerUserUsageHandler(store)
 	userModelPolicyHandler := handler.NewUserModelPolicyHandler(store)
 	auth := authHandler.RequireAuth
 
@@ -190,6 +192,9 @@ func main() {
 	// Partner APIs require endpoint-specific bearer secrets, independently
 	// of the legacy gateway M2M toggle.
 	mux.HandleFunc("/api/v1/usage/users/", handler.RequirePartnerAPIAuth(cfg.UsageReportAPISecret, usageReportHandler.HandleUserUsage))
+	mux.HandleFunc("/api/v1/usage/reports", handler.RequirePartnerAPIAuth(cfg.UsageReportAPISecret, partnerUserUsageHandler.HandleBatchUserUsage))
+	mux.HandleFunc("/api/v1/users", handler.RequirePartnerAPIAuth(cfg.UserManagementAPISecret, partnerUsersHandler.HandleUsers))
+	mux.HandleFunc("/api/v1/users/", handler.RequirePartnerAPIAuth(cfg.UserManagementAPISecret, partnerUsersHandler.HandleUsers))
 	mux.HandleFunc("/api/v1/model-policies/users/", handler.RequirePartnerAPIAuth(cfg.ModelPolicyAPISecret, userModelPolicyHandler.HandleUserModelPolicy))
 	// /api/v1/team-usage was REMOVED on purpose: it sat outside auth, took
 	// the group from the query string, and defaulted to a hard-coded team.

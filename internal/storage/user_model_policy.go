@@ -149,6 +149,26 @@ func (s *Store) GetUserModelAllowlist(ctx context.Context, username string) (Use
 	if username == "" {
 		return UserModelAllowlist{}, errors.New("username is required")
 	}
+	// SSO partner identities are keyed by stable UUID in their public policy
+	// API. Resolve the MaaS login from validation metadata through the retained
+	// login map so policies follow email changes and inactive users fail closed.
+	partnerUser, partnerErr := s.PartnerUserByMaaSUsername(ctx, username)
+	if partnerErr == nil {
+		partnerPolicy, err := s.GetPartnerUserModelAllowlist(ctx, partnerUser.UserID)
+		if err != nil {
+			return UserModelAllowlist{}, err
+		}
+		return UserModelAllowlist{
+			Username:  username,
+			Enabled:   partnerPolicy.Enabled,
+			Models:    partnerPolicy.Models,
+			UpdatedBy: partnerPolicy.UpdatedBy,
+			UpdatedAt: partnerPolicy.UpdatedAt,
+		}, nil
+	}
+	if !errors.Is(partnerErr, ErrPartnerUserNotFound) {
+		return UserModelAllowlist{}, fmt.Errorf("resolve partner MaaS username: %w", partnerErr)
+	}
 	logins, err := s.userLogins(ctx, username)
 	if err != nil {
 		return UserModelAllowlist{}, err

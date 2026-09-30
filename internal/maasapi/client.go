@@ -81,6 +81,41 @@ func (c *Client) CreateAPIKey(ctx context.Context, username, group, keyName stri
 	return &result, nil
 }
 
+// BulkRevokeAPIKeys revokes every active key for one MaaS username while
+// presenting that same username to MaaS. The operation is therefore
+// self-scoped and does not require a cluster-admin service-account identity.
+func (c *Client) BulkRevokeAPIKeys(ctx context.Context, username, group string) error {
+	username = strings.TrimSpace(username)
+	if username == "" || group == "" {
+		return fmt.Errorf("maas-api bulk revoke requires a username and group")
+	}
+	body, err := json.Marshal(map[string]string{"username": username})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/api-keys/bulk-revoke", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	groupJSON, err := json.Marshal([]string{group})
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-MaaS-Username", username)
+	req.Header.Set("X-MaaS-Group", string(groupJSON))
+	req.Header.Set("X-MaaS-Tenant", c.tenant)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("maas-api bulk revoke request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusBadRequest {
+		return fmt.Errorf("maas-api bulk revoke failed with status %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func (c *Client) SearchAPIKeys(ctx context.Context, username string, groups []string) (*SearchResult, error) {
 	searchBody := map[string]any{}
 	if username != "" {
