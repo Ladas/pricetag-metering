@@ -41,10 +41,3 @@ func TestRollupReadSwitchDefaults(t *testing.T) {
 		t.Errorf("RollupRefreshSeconds default = %d, want 300 (bounds refresh and parity-check latency)", cfg.RollupRefreshSeconds)
 	}
 }
-
-func TestUserManagementAPISecretLoadsFromEnvironment(t *testing.T) {
-	t.Setenv("USER_MANAGEMENT_API_SECRET", "test-value")
-	if got := Load().UserManagementAPISecret; got != "test-value" {
-		t.Fatalf("UserManagementAPISecret = %q, want configured secret", got)
-	}
-}

@@ -2,18 +2,21 @@
 
 This is the integration contract for Atlas/AIR and AI Budget Helper (AIBH)
 backends calling PriceTag Metering. All endpoints are server-to-server APIs.
-Never put a bearer token in browser code, URLs, logs, telemetry, or source
-control.
+Authentication is provided by the EnMaaS OpenShift Route/AuthPolicy, not by
+the Metering application listener.
 
 ## Authentication
 
-Send the endpoint-specific bearer credential in the `Authorization` header.
-Metering compares credentials in constant time and returns `503` when the
-corresponding secret is not configured.
+Do not send a Metering bearer token. The OpenShift route must authenticate the
+Atlas/AIR/AIBH caller before forwarding to the Metering service and must prevent
+direct Service access or port-forward bypass. The route owner is responsible
+for the AuthPolicy, workload identity/mTLS, and any IP restrictions.
 
-| API | Environment variable | Deployment secret |
+| API | OpenShift route |
 |---|---|---|
-| User directory and key issuance | `USER_MANAGEMENT_API_SECRET` | `metering-user-management-api` (`token`) |
+| User directory and key issuance | `/api/v1/users` |
+| Batch usage report | `/api/v1/usage/reports` |
+| Model allowlist | `/api/v1/model-policies/users/{user_id}/allowlist` |
 
 Key endpoints additionally require `PARTNER_USER_KEY_GROUP`, the MaaS group
 presented on every key operation. There is no default: the group must exist in
@@ -21,20 +24,18 @@ MaaS with an accessible subscription, and until it is configured the key
 endpoints (list, mint, revoke, deactivate) answer `503`. Its value is an
 operator decision tracked in PriceTag #31 (SSO is the canonical group source).
 
-Callers sharing one credential may send `X-Partner-Client: <name>`
+The authenticated route may forward `X-Partner-Client: <name>`
 (`[a-z0-9._-]`, ≤32 chars) so audit rows distinguish, for example, `atlas`
-from `aibh-refresh`.
-| Batch usage report | `USAGE_REPORT_API_SECRET` | `metering-partner-api` (`usage-report`) |
-| Model allowlist | `MODEL_POLICY_API_SECRET` | `metering-partner-api` (`model-policy`) |
+from `aibh-refresh`. This header is audit metadata, not authentication.
 
 ```http
-Authorization: Bearer <secret-from-approved-secret-manager>
+X-Partner-Client: atlas
 Content-Type: application/json
 ```
 
-The bearer credentials are backend credentials, not Atlas/AIBH user sessions.
 The Atlas backend must validate its own SSO session and derive the canonical
-`user_id` before calling these APIs.
+`user_id` before calling these APIs. The OpenShift route must not trust
+caller-supplied identity headers without validating the caller first.
 
 ## User identity and tags
 
@@ -368,12 +369,11 @@ whiteboard directly.
 | Status | Meaning |
 |---|---|
 | `400` | Invalid UUID/tags/time range/body or unsupported query parameter |
-| `401` | Missing or incorrect bearer credential |
 | `404` | Unknown user UUID |
 | `409` | Duplicate ID/email, inactive user, or operation conflict |
 | `429` | Too many concurrent key mints on this replica; honour `Retry-After` |
 | `502` | MaaS key mint or key revocation failed |
-| `503` | Endpoint credential or `PARTNER_USER_KEY_GROUP` is not configured |
+| `503` | `PARTNER_USER_KEY_GROUP` is not configured, or the route/AuthPolicy is unavailable |
 | `500` | Metering database or internal operation failed |
 
 All API responses use `Cache-Control: no-store`. Keep the routes behind HTTPS
