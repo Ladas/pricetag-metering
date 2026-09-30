@@ -377,11 +377,11 @@ func remarshal(src any, dst any) error {
 func (c *Client) listModelsFromConfig(ctx context.Context) ([]ModelInfo, error) {
 	raw, err := c.readConfigMapYAML(ctx)
 	if err != nil {
-		return nil, nil
+		return nil, fmt.Errorf("read model catalog config: %w", err)
 	}
 	var cfg praxisTop
 	if err := yaml.Unmarshal([]byte(raw), &cfg); err != nil {
-		return nil, nil
+		return nil, fmt.Errorf("parse model catalog config YAML: %w", err)
 	}
 
 	seen := map[string]bool{}
@@ -407,7 +407,7 @@ func (c *Client) listModelsFromConfig(ctx context.Context) ([]ModelInfo, error) 
 			}
 			var models []catalogModel
 			if err := remarshal(f["models"], &models); err != nil {
-				continue
+				return nil, fmt.Errorf("parse model_catalog filter models: %w", err)
 			}
 			for _, m := range models {
 				if seen[m.ID] {
