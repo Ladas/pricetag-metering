@@ -1,9 +1,35 @@
-# Partner User Directory, Key, Usage, and Model-Policy APIs
+# Atlas/AIR/AIBH Partner APIs
 
 This is the integration contract for Atlas/AIR and AI Budget Helper (AIBH)
-backends calling PriceTag Metering. All endpoints are server-to-server APIs.
+backends calling PriceTag Metering. All endpoints below are server-to-server
+APIs. The summary is intentionally first so client teams can see the complete
+surface before reading the detailed examples.
 Authentication is provided by the EnMaaS OpenShift Route/AuthPolicy, not by
 the Metering application listener.
+
+## API summary
+
+| Capability | Method and path | What it does | Main response |
+|---|---|---|---|
+| Create user | `POST /api/v1/users` | Strict create of a UUID-keyed user and tags | Created user (`201`) |
+| Upsert user | `PUT /api/v1/users/{user_id}` | Create or replace the complete tag set | User (`201` or `200`) |
+| Read/search users | `GET /api/v1/users/{user_id}`<br>`GET /api/v1/users?tag.<name>=<value>` | Read one user or exact tag-filtered pages | User or `{users, has_more}` |
+| Deactivate user | `DELETE /api/v1/users/{user_id}` | Soft-disable and revoke only keys minted by this API | `{user_id, active, keys_revoked}` |
+| Reactivate user | `POST /api/v1/users/{user_id}/reactivate` | Re-enable after key revocation completes | User |
+| List keys | `GET /api/v1/users/{user_id}/keys` | List MaaS key metadata through Metering | `{user_id, keys}`; no plaintext keys |
+| Mint key | `POST /api/v1/users/{user_id}/keys` | Validate user, then mint through Metering → MaaS | MaaS key response; plaintext once |
+| Revoke key | `DELETE /api/v1/users/{user_id}/keys/{key_id}` | Revoke only a key minted by this API | `{user_id, key_id, status}` |
+| Batch usage | `POST /api/v1/usage/reports` | Usage for up to 1,000 UUIDs over `[from,to)` | Users with tags, totals, model rows |
+| Model allowlist | `GET/PUT/DELETE /api/v1/model-policies/users/{user_id}/allowlist` | Read, replace, or clear exact per-user allowed models | `{user_id, enabled, models}` |
+
+### Model discovery status
+
+There is currently **no partner-facing model-discovery API** in this contract.
+The existing `/api/v1/pricing` endpoint is a PriceTag dashboard/session API,
+and `/api/v1/admin/models` is a super-admin API; they are not available to
+Atlas/AIR/AIBH as backend discovery endpoints. The tools must use an agreed
+model catalog/configuration until a separate discovery endpoint is designed
+and secured.
 
 ## Authentication
 
@@ -11,12 +37,6 @@ Do not send a Metering bearer token. The OpenShift route must authenticate the
 Atlas/AIR/AIBH caller before forwarding to the Metering service and must prevent
 direct Service access or port-forward bypass. The route owner is responsible
 for the AuthPolicy, workload identity/mTLS, and any IP restrictions.
-
-| API | OpenShift route |
-|---|---|---|
-| User directory and key issuance | `/api/v1/users` |
-| Batch usage report | `/api/v1/usage/reports` |
-| Model allowlist | `/api/v1/model-policies/users/{user_id}/allowlist` |
 
 Key endpoints additionally require `PARTNER_USER_KEY_GROUP`, the MaaS group
 presented on every key operation. There is no default: the group must exist in
@@ -234,7 +254,8 @@ POST /api/v1/users/{user_id}/keys
 ```
 
 Metering confirms the user exists and is active, then calls MaaS with
-`tags.email` and the fixed MaaS group `GE`; callers cannot override the group.
+`tags.email` and the configured `PARTNER_USER_KEY_GROUP`; callers cannot
+override the group. There is no default group.
 The MaaS environment must have a subscription accessible to that username and
 group. A missing/inaccessible subscription makes MaaS reject key minting and
 Metering returns `502`.
