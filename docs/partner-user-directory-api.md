@@ -40,7 +40,7 @@ Required when creating or replacing a user:
 | `email` | Required bare email address; unique case-insensitively. Used as MaaS username. |
 | `first_name` | Required non-empty string. |
 | `last_name` | Required non-empty string. |
-| `manager_uuid` | Optional; when present, a UUID string or `null`. |
+| `manager_uuid` | Optional; when present, a UUID string or `null` (an empty string is normalized to `null`). |
 
 Additional tags are supported as string values. Tag keys use lowercase
 letters/digits plus `_`, `.`, and `-`; at most 100 tags are accepted, each key
