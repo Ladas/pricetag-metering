@@ -180,6 +180,7 @@ func main() {
 	usageReportHandler := handler.NewUsageReportHandler(store)
 	partnerUsersHandler := handler.NewPartnerUsersHandler(store, maasClient, cfg.PartnerUserKeyGroup)
 	partnerUserUsageHandler := handler.NewPartnerUserUsageHandler(store)
+	modelCatalogHandler := handler.NewModelCatalogHandler(k8sClient)
 	userModelPolicyHandler := handler.NewUserModelPolicyHandler(store)
 	auth := authHandler.RequireAuth
 
@@ -194,6 +195,7 @@ func main() {
 	// network boundary; do not expose these listener paths without that layer.
 	mux.HandleFunc("/api/v1/usage/users/", usageReportHandler.HandleUserUsage)
 	mux.HandleFunc("/api/v1/usage/reports", partnerUserUsageHandler.HandleBatchUserUsage)
+	mux.HandleFunc("/api/v1/models", modelCatalogHandler.Handle)
 	mux.HandleFunc("/api/v1/users", partnerUsersHandler.HandleUsers)
 	mux.HandleFunc("/api/v1/users/", partnerUsersHandler.HandleUsers)
 	mux.HandleFunc("/api/v1/model-policies/users/", userModelPolicyHandler.HandleUserModelPolicy)

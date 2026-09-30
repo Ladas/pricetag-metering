@@ -21,12 +21,34 @@ the Metering application listener.
 | Revoke key | `DELETE /api/v1/users/{user_id}/keys/{key_id}` | Revoke only a key minted by this API | `{user_id, key_id, status}` |
 | Batch usage | `POST /api/v1/usage/reports` | Usage for up to 1,000 UUIDs over `[from,to)` | Users with tags, totals, model rows |
 | Model allowlist | `GET/PUT/DELETE /api/v1/model-policies/users/{user_id}/allowlist` | Read, replace, or clear exact per-user allowed models | `{user_id, enabled, models}` |
-| Model discovery (gateway) | `GET https://api.enmaas.devshift.net/v1/models` | List models accessible to the presented MaaS API key | OpenAI-compatible `{object, data}` model list |
+| Global model catalog | `GET /api/v1/models` | List the EnMaaS catalog without a MaaS inference key | OpenAI-compatible `{object, data}` model list |
+| User-accessible model discovery | `GET https://api.enmaas.devshift.net/v1/models` | List models accessible to the presented MaaS API key | OpenAI-compatible `{object, data}` model list |
 
 ### Model discovery
 
-Model discovery already exists on the EnMaaS gateway; no duplicate Metering
-proxy is needed:
+The partner API now exposes the global catalog through Metering. It is
+authenticated by the OpenShift Route/AuthPolicy and does not require a MaaS
+inference key:
+
+```http
+GET /api/v1/models
+```
+
+Response:
+
+```json
+{
+  "object": "list",
+  "data": [
+    {"id": "claude-sonnet-4-5", "owned_by": "vertex"},
+    {"id": "gpt-5.6-luna", "owned_by": "openai"},
+    {"id": "Inferact/Qwen3.8-Flash-Next-NVFP4", "owned_by": "vllm"}
+  ]
+}
+```
+
+The catalog is global availability, not authorization for every user. For
+user-specific access filtering, the existing EnMaaS gateway endpoint remains:
 
 ```http
 GET https://api.enmaas.devshift.net/v1/models
@@ -59,7 +81,9 @@ Observed in the EnMaaS test environment on 30 September 2026:
   `claude-sonnet-4-5`, `claude-sonnet-5`, `claude-haiku-4-5`,
   `claude-opus-4-5`, and `claude-opus-4-6`.
 
-The existing `/api/v1/pricing` endpoint is a PriceTag dashboard/session API,
+The Metering catalog reads the configured Praxis/MaaS catalog through its
+Kubernetes adapter, including OpenAI, Vertex, and hosted model entries. The
+existing `/api/v1/pricing` endpoint is a PriceTag dashboard/session API,
 and `/api/v1/admin/models` is a super-admin API; they are not the discovery
 contract for Atlas/AIR/AIBH.
 
