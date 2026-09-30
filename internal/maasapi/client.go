@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -114,6 +115,84 @@ func (c *Client) BulkRevokeAPIKeys(ctx context.Context, username, group string) 
 		return fmt.Errorf("maas-api bulk revoke failed with status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// ListUserAPIKeys lists a user's own keys by presenting that username to
+// MaaS, which scopes non-admin searches to the caller. Pages are walked until
+// MaaS reports no more results.
+func (c *Client) ListUserAPIKeys(ctx context.Context, username, group string) ([]APIKeyResponse, error) {
+	username = strings.TrimSpace(username)
+	if username == "" || group == "" {
+		return nil, fmt.Errorf("maas-api key list requires a username and group")
+	}
+	groupJSON, err := json.Marshal([]string{group})
+	if err != nil {
+		return nil, err
+	}
+	const pageSize = 100
+	keys := []APIKeyResponse{}
+	for offset := 0; offset <= 10*pageSize; offset += pageSize {
+		body, err := json.Marshal(map[string]any{
+			"filters":    map[string]any{"username": username},
+			"pagination": map[string]int{"limit": pageSize, "offset": offset},
+		})
+		if err != nil {
+			return nil, err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/api-keys/search", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-MaaS-Username", username)
+		req.Header.Set("X-MaaS-Group", string(groupJSON))
+		req.Header.Set("X-MaaS-Tenant", c.tenant)
+		resp, err := c.client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("maas-api key list request failed: %w", err)
+		}
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode >= http.StatusBadRequest {
+			return nil, fmt.Errorf("maas-api key list failed with status %d", resp.StatusCode)
+		}
+		var page SearchResult
+		if err := json.Unmarshal(data, &page); err != nil {
+			return nil, fmt.Errorf("failed to parse key list: %w", err)
+		}
+		keys = append(keys, page.Data...)
+		if !page.HasMore {
+			break
+		}
+	}
+	return keys, nil
+}
+
+// RevokeUserAPIKey revokes one key as its owner and returns the MaaS status.
+// MaaS answers 404 for keys the presented username does not own.
+func (c *Client) RevokeUserAPIKey(ctx context.Context, keyID, username, group string) (int, error) {
+	username = strings.TrimSpace(username)
+	keyID = strings.TrimSpace(keyID)
+	if username == "" || group == "" || keyID == "" {
+		return 0, fmt.Errorf("maas-api key revoke requires a key id, username, and group")
+	}
+	groupJSON, err := json.Marshal([]string{group})
+	if err != nil {
+		return 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+"/v1/api-keys/"+url.PathEscape(keyID), nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("X-MaaS-Username", username)
+	req.Header.Set("X-MaaS-Group", string(groupJSON))
+	req.Header.Set("X-MaaS-Tenant", c.tenant)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("maas-api key revoke request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode, nil
 }
 
 func (c *Client) SearchAPIKeys(ctx context.Context, username string, groups []string) (*SearchResult, error) {

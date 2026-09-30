@@ -47,6 +47,15 @@ func (h *PartnerUsersHandler) HandleUsers(w http.ResponseWriter, r *http.Request
 		h.handleKeys(w, r, userID)
 		return
 	}
+	if len(parts) == 3 && parts[1] == "keys" {
+		keyID, err := url.PathUnescape(parts[2])
+		if err != nil || keyID == "" || strings.Contains(keyID, "/") {
+			http.Error(w, "invalid key_id path segment", http.StatusBadRequest)
+			return
+		}
+		h.handleKeyRevoke(w, r, userID, keyID)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "reactivate" {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
@@ -84,7 +93,16 @@ func (h *PartnerUsersHandler) HandleUsers(w http.ResponseWriter, r *http.Request
 			http.Error(w, "tags is required", http.StatusBadRequest)
 			return
 		}
+		// PUT is an upsert so an SSO front end can send the user's current
+		// profile on every visit without a create-or-update round trip.
 		user, err := h.store.UpdatePartnerUser(r.Context(), "partner-m2m", userID, body.Tags)
+		if errors.Is(err, storage.ErrPartnerUserNotFound) {
+			user, err = h.store.CreatePartnerUser(r.Context(), "partner-m2m", userID, body.Tags)
+			if err == nil {
+				w.Header().Set("Location", "/api/v1/users/"+user.UserID)
+				w.WriteHeader(http.StatusCreated)
+			}
+		}
 		if err != nil {
 			h.userError(w, r, err)
 			return
@@ -181,8 +199,33 @@ func queryInt(raw string, fallback int) (int, error) {
 }
 
 func (h *PartnerUsersHandler) handleKeys(w http.ResponseWriter, r *http.Request, userID string) {
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", http.MethodPost)
+	switch r.Method {
+	case http.MethodGet:
+		user, err := h.store.GetPartnerUser(r.Context(), userID)
+		if err != nil {
+			h.userError(w, r, err)
+			return
+		}
+		usernames, err := h.store.ListPartnerUsernames(r.Context(), user.UserID)
+		if err != nil {
+			h.userError(w, r, err)
+			return
+		}
+		keys := []maasapi.APIKeyResponse{}
+		for _, username := range usernames {
+			page, err := h.maas.ListUserAPIKeys(r.Context(), username, partnerUserKeyGroup)
+			if err != nil {
+				slog.Error("partner MaaS key list failed", "user_id", user.UserID, "error", err)
+				http.Error(w, "MaaS key list failed", http.StatusBadGateway)
+				return
+			}
+			keys = append(keys, page...)
+		}
+		writeJSON(w, map[string]any{"user_id": user.UserID, "keys": keys})
+		return
+	case http.MethodPost:
+	default:
+		w.Header().Set("Allow", "GET, POST")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -219,6 +262,46 @@ func (h *PartnerUsersHandler) handleKeys(w http.ResponseWriter, r *http.Request,
 	// The secret key is returned only by MaaS at mint time. No secret is
 	// persisted or logged by Metering; clients must store it immediately.
 	writeJSON(w, key)
+}
+
+// handleKeyRevoke revokes one key as its owner. Every login ever mapped to
+// the user is tried so keys minted under a previous email remain revocable;
+// MaaS answers 404 for keys the presented login does not own.
+func (h *PartnerUsersHandler) handleKeyRevoke(w http.ResponseWriter, r *http.Request, userID, keyID string) {
+	if r.Method != http.MethodDelete {
+		w.Header().Set("Allow", http.MethodDelete)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user, err := h.store.GetPartnerUser(r.Context(), userID)
+	if err != nil {
+		h.userError(w, r, err)
+		return
+	}
+	usernames, err := h.store.ListPartnerUsernames(r.Context(), user.UserID)
+	if err != nil {
+		h.userError(w, r, err)
+		return
+	}
+	for _, username := range usernames {
+		status, err := h.maas.RevokeUserAPIKey(r.Context(), keyID, username, partnerUserKeyGroup)
+		if err != nil {
+			slog.Error("partner MaaS key revoke failed", "user_id", user.UserID, "error", err)
+			http.Error(w, "MaaS key revoke failed", http.StatusBadGateway)
+			return
+		}
+		switch {
+		case status == http.StatusNotFound:
+			continue
+		case status >= http.StatusBadRequest:
+			slog.Error("partner MaaS key revoke rejected", "user_id", user.UserID, "status", status)
+			http.Error(w, "MaaS key revoke failed", http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, map[string]any{"user_id": user.UserID, "key_id": keyID, "status": "revoked"})
+		return
+	}
+	http.Error(w, "key not found for this user", http.StatusNotFound)
 }
 
 func (h *PartnerUsersHandler) deactivate(w http.ResponseWriter, r *http.Request, userID string) {
