@@ -21,15 +21,47 @@ the Metering application listener.
 | Revoke key | `DELETE /api/v1/users/{user_id}/keys/{key_id}` | Revoke only a key minted by this API | `{user_id, key_id, status}` |
 | Batch usage | `POST /api/v1/usage/reports` | Usage for up to 1,000 UUIDs over `[from,to)` | Users with tags, totals, model rows |
 | Model allowlist | `GET/PUT/DELETE /api/v1/model-policies/users/{user_id}/allowlist` | Read, replace, or clear exact per-user allowed models | `{user_id, enabled, models}` |
+| Model discovery (gateway) | `GET https://api.enmaas.devshift.net/v1/models` | List models accessible to the presented MaaS API key | OpenAI-compatible `{object, data}` model list |
 
-### Model discovery status
+### Model discovery
 
-There is currently **no partner-facing model-discovery API** in this contract.
+Model discovery already exists on the EnMaaS gateway; no duplicate Metering
+proxy is needed:
+
+```http
+GET https://api.enmaas.devshift.net/v1/models
+Authorization: Bearer <MAAS_API_KEY>
+```
+
+The API key is the caller's MaaS inference key and must be supplied by the
+trusted backend, never browser code or this document. MaaS/gateway applies the
+key's tenant, subscription, and model-access rules before returning the list.
+The response is OpenAI-compatible:
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "claude-sonnet-4-5",
+      "object": "model",
+      "created": 0,
+      "owned_by": "vertex"
+    }
+  ]
+}
+```
+
+Observed in the EnMaaS test environment on 30 September 2026:
+
+- No `Authorization` header returned `401 Unauthorized`.
+- A valid MaaS API key returned `200` and 10 accessible models, including
+  `claude-sonnet-4-5`, `claude-sonnet-5`, `claude-haiku-4-5`,
+  `claude-opus-4-5`, and `claude-opus-4-6`.
+
 The existing `/api/v1/pricing` endpoint is a PriceTag dashboard/session API,
-and `/api/v1/admin/models` is a super-admin API; they are not available to
-Atlas/AIR/AIBH as backend discovery endpoints. The tools must use an agreed
-model catalog/configuration until a separate discovery endpoint is designed
-and secured.
+and `/api/v1/admin/models` is a super-admin API; they are not the discovery
+contract for Atlas/AIR/AIBH.
 
 ## Authentication
 
