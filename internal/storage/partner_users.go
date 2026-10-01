@@ -49,9 +49,9 @@ type PartnerUser struct {
 }
 
 type PartnerUserPage struct {
-	Users      []PartnerUser `json:"users"`
-	HasMore    bool          `json:"has_more"`
-	NextOffset int           `json:"next_offset,omitempty"`
+	Users    []PartnerUser `json:"users"`
+	HasMore  bool          `json:"-"`
+	NextPage *string       `json:"next_page"`
 }
 
 // PartnerUserModelAllowlist is the UUID-keyed external policy representation.
@@ -652,7 +652,6 @@ func (s *Store) ListPartnerUsers(ctx context.Context, tagFilters map[string]stri
 	page.HasMore = len(page.Users) > limit
 	if page.HasMore {
 		page.Users = page.Users[:limit]
-		page.NextOffset = offset + limit
 	}
 	return page, nil
 }

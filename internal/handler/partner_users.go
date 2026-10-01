@@ -216,6 +216,14 @@ func (h *PartnerUsersHandler) handleCollection(w http.ResponseWriter, r *http.Re
 			http.Error(w, "partner user list failed", http.StatusInternalServerError)
 			return
 		}
+		if page.HasMore {
+			nextQuery := query
+			nextQuery.Set("offset", strconv.Itoa(offset+limit))
+			nextURL := *r.URL
+			nextURL.RawQuery = nextQuery.Encode()
+			nextPage := nextURL.String()
+			page.NextPage = &nextPage
+		}
 		writeJSON(w, page)
 	default:
 		w.Header().Set("Allow", "GET, POST")
