@@ -41,3 +41,15 @@ func TestRollupReadSwitchDefaults(t *testing.T) {
 		t.Errorf("RollupRefreshSeconds default = %d, want 300 (bounds refresh and parity-check latency)", cfg.RollupRefreshSeconds)
 	}
 }
+
+func TestPartnerAPISecretsLoadFromEnvironment(t *testing.T) {
+	t.Setenv("USAGE_REPORT_API_SECRET", "usage")
+	t.Setenv("MODEL_POLICY_API_SECRET", "policy")
+	t.Setenv("USER_MANAGEMENT_API_SECRET", "users")
+	t.Setenv("MODEL_CATALOG_API_SECRET", "catalog")
+	cfg := Load()
+	if cfg.UsageReportAPISecret != "usage" || cfg.ModelPolicyAPISecret != "policy" ||
+		cfg.UserManagementAPISecret != "users" || cfg.ModelCatalogAPISecret != "catalog" {
+		t.Fatalf("partner API secrets did not load from environment")
+	}
+}
