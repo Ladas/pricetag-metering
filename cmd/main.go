@@ -190,15 +190,14 @@ func main() {
 	m2mAuth := func(next http.HandlerFunc) http.HandlerFunc { return handler.RequireM2MAuth(cfg, next) }
 	mux.HandleFunc("/api/v1/events", m2mAuth(eventsHandler.HandleEvent))
 	mux.HandleFunc("/api/v1/customers/", m2mAuth(entitlementsHandler.HandleEntitlement))
-	// Partner APIs are intentionally unauthenticated inside Metering. The
-	// EnMaaS OpenShift Routes/AuthPolicy own the caller authentication and
-	// network boundary; do not expose these listener paths without that layer.
-	mux.HandleFunc("/api/v1/usage/users/", usageReportHandler.HandleUserUsage)
-	mux.HandleFunc("/api/v1/usage/reports", partnerUserUsageHandler.HandleBatchUserUsage)
-	mux.HandleFunc("/api/v1/models", modelCatalogHandler.Handle)
-	mux.HandleFunc("/api/v1/users", partnerUsersHandler.HandleUsers)
-	mux.HandleFunc("/api/v1/users/", partnerUsersHandler.HandleUsers)
-	mux.HandleFunc("/api/v1/model-policies/users/", userModelPolicyHandler.HandleUserModelPolicy)
+	// Partner APIs use endpoint-specific bearer credentials in addition to any
+	// Route/AuthPolicy. This protects direct Service and port-forward access.
+	mux.HandleFunc("/api/v1/usage/users/", handler.RequirePartnerAPIAuth(cfg.UsageReportAPISecret, usageReportHandler.HandleUserUsage))
+	mux.HandleFunc("/api/v1/usage/reports", handler.RequirePartnerAPIAuth(cfg.UsageReportAPISecret, partnerUserUsageHandler.HandleBatchUserUsage))
+	mux.HandleFunc("/api/v1/models", handler.RequirePartnerAPIAuth(cfg.ModelCatalogAPISecret, modelCatalogHandler.Handle))
+	mux.HandleFunc("/api/v1/users", handler.RequirePartnerAPIAuth(cfg.UserManagementAPISecret, partnerUsersHandler.HandleUsers))
+	mux.HandleFunc("/api/v1/users/", handler.RequirePartnerAPIAuth(cfg.UserManagementAPISecret, partnerUsersHandler.HandleUsers))
+	mux.HandleFunc("/api/v1/model-policies/users/", handler.RequirePartnerAPIAuth(cfg.ModelPolicyAPISecret, userModelPolicyHandler.HandleUserModelPolicy))
 	// /api/v1/team-usage was REMOVED on purpose: it sat outside auth, took
 	// the group from the query string, and defaulted to a hard-coded team.
 	// Its replacement is /api/v1/org/usage below, which is authenticated

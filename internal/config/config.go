@@ -65,6 +65,13 @@ type Config struct {
 	M2MAuthRequired bool
 	M2MSharedSecret string
 
+	// Endpoint-specific credentials protect the partner APIs even when a
+	// request reaches the Service directly. Empty values fail closed with 503.
+	UsageReportAPISecret    string
+	ModelPolicyAPISecret    string
+	UserManagementAPISecret string
+	ModelCatalogAPISecret   string
+
 	// PartnerUserKeyGroup is the MaaS group presented for every partner key
 	// operation. Deliberately no default: the group must exist in MaaS with
 	// an accessible subscription, and inventing one silently would mint keys
@@ -220,6 +227,10 @@ func Load() Config {
 		DefaultGroup:              envDefault("DEFAULT_GROUP", "default"),
 		M2MAuthRequired:           envBool("M2M_AUTH_REQUIRED", false),
 		M2MSharedSecret:           os.Getenv("M2M_SHARED_SECRET"),
+		UsageReportAPISecret:      os.Getenv("USAGE_REPORT_API_SECRET"),
+		ModelPolicyAPISecret:      os.Getenv("MODEL_POLICY_API_SECRET"),
+		UserManagementAPISecret:   os.Getenv("USER_MANAGEMENT_API_SECRET"),
+		ModelCatalogAPISecret:     os.Getenv("MODEL_CATALOG_API_SECRET"),
 		PartnerUserKeyGroup:       os.Getenv("PARTNER_USER_KEY_GROUP"),
 		OrgInviteTTLHours:         envInt("ORG_INVITE_TTL_HOURS", 72),
 		KeyRotationOverlapDays:    envInt("KEY_ROTATION_OVERLAP_DAYS", 7),
