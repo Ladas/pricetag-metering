@@ -1039,8 +1039,24 @@ func (s *Store) ListUserProfiles(ctx context.Context) ([]UserProfile, error) {
 	return result, rows.Err()
 }
 
+// migrationLockKey serialises migrate() across replicas that start together;
+// concurrent CREATE ... IF NOT EXISTS on the same catalog entry can still fail
+// with a duplicate-key error inside Postgres.
+const migrationLockKey = 0x7072696365746167 // "pricetag"
+
 func (s *Store) migrate(ctx context.Context) error {
 	slog.Info("running database migrations")
+	lockConn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("migration lock connection: %w", err)
+	}
+	defer lockConn.Close()
+	if _, err := lockConn.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, migrationLockKey); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+	defer func() {
+		_, _ = lockConn.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, migrationLockKey)
+	}()
 	for _, stmt := range migrations {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("migration failed: %w", err)
@@ -1054,6 +1070,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	if err := s.migrateUserModelPolicy(ctx); err != nil {
+		return err
+	}
+	if err := s.migratePartnerUsers(ctx); err != nil {
 		return err
 	}
 	slog.Info("database migrations complete")

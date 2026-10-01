@@ -98,49 +98,6 @@ func normalizeUserModelAllowlist(models []string) ([]string, error) {
 	return clean, nil
 }
 
-// SetUserModelAllowlist replaces the user's entire allowlist atomically. The
-// update and audit row commit together. An empty list is a configured deny-all
-// policy; DeleteUserModelAllowlist clears the restriction.
-func (s *Store) SetUserModelAllowlist(ctx context.Context, actor, username string, models []string) (UserModelAllowlist, error) {
-	username = strings.TrimSpace(username)
-	if username == "" {
-		return UserModelAllowlist{}, errors.New("username is required")
-	}
-	clean, err := normalizeUserModelAllowlist(models)
-	if err != nil {
-		return UserModelAllowlist{}, err
-	}
-	logins, err := s.userLogins(ctx, username)
-	if err != nil {
-		return UserModelAllowlist{}, err
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return UserModelAllowlist{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	for _, login := range logins {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO user_model_allowlists (username, models, updated_by)
-			VALUES ($1, $2, $3)
-			ON CONFLICT (username) DO UPDATE SET
-				models = EXCLUDED.models,
-				updated_by = EXCLUDED.updated_by,
-				updated_at = NOW()`, login, pq.Array(clean), actor); err != nil {
-			return UserModelAllowlist{}, fmt.Errorf("upsert model allowlist: %w", err)
-		}
-	}
-	if err := s.auditTx(ctx, tx, actor, "user.model_allowlist_set", username,
-		map[string]any{"models": clean, "linked_usernames": len(logins)}); err != nil {
-		return UserModelAllowlist{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return UserModelAllowlist{}, err
-	}
-	s.invalidateQuotaCache()
-	return s.GetUserModelAllowlist(ctx, username)
-}
-
 // GetUserModelAllowlist reads the effective policy for a user. If legacy data
 // contains differing policies for linked logins, use their intersection so an
 // alternate login cannot gain models.
@@ -148,6 +105,26 @@ func (s *Store) GetUserModelAllowlist(ctx context.Context, username string) (Use
 	username = strings.TrimSpace(username)
 	if username == "" {
 		return UserModelAllowlist{}, errors.New("username is required")
+	}
+	// SSO partner identities are keyed by stable UUID in their public policy
+	// API. Resolve the MaaS login from validation metadata through the retained
+	// login map so policies follow email changes and inactive users fail closed.
+	partnerUser, partnerErr := s.PartnerUserByMaaSUsername(ctx, username)
+	if partnerErr == nil {
+		partnerPolicy, err := s.GetPartnerUserModelAllowlist(ctx, partnerUser.UserID)
+		if err != nil {
+			return UserModelAllowlist{}, err
+		}
+		return UserModelAllowlist{
+			Username:  username,
+			Enabled:   partnerPolicy.Enabled,
+			Models:    partnerPolicy.Models,
+			UpdatedBy: partnerPolicy.UpdatedBy,
+			UpdatedAt: partnerPolicy.UpdatedAt,
+		}, nil
+	}
+	if !errors.Is(partnerErr, ErrPartnerUserNotFound) {
+		return UserModelAllowlist{}, fmt.Errorf("resolve partner MaaS username: %w", partnerErr)
 	}
 	logins, err := s.userLogins(ctx, username)
 	if err != nil {
@@ -198,36 +175,6 @@ func (s *Store) GetUserModelAllowlist(ctx context.Context, username string) (Use
 	}
 	sort.Strings(policy.Models)
 	return policy, nil
-}
-
-// DeleteUserModelAllowlist removes restrictions and restores the service's
-// baseline model-access policy for the user's linked MaaS logins.
-func (s *Store) DeleteUserModelAllowlist(ctx context.Context, actor, username string) error {
-	username = strings.TrimSpace(username)
-	if username == "" {
-		return errors.New("username is required")
-	}
-	logins, err := s.userLogins(ctx, username)
-	if err != nil {
-		return err
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM user_model_allowlists WHERE username = ANY($1)`, pq.Array(logins)); err != nil {
-		return fmt.Errorf("delete model allowlist: %w", err)
-	}
-	if err := s.auditTx(ctx, tx, actor, "user.model_allowlist_clear", username,
-		map[string]any{"linked_usernames": len(logins)}); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	s.invalidateQuotaCache()
-	return nil
 }
 
 func (d QuotaDecision) ModelAllowed(model string) bool {

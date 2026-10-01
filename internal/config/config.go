@@ -65,14 +65,11 @@ type Config struct {
 	M2MAuthRequired bool
 	M2MSharedSecret string
 
-	// UsageReportAPISecret protects the partner-facing reporting API. Unlike
-	// the legacy gateway M2M setting, an empty value leaves this endpoint
-	// unavailable rather than unauthenticated.
-	UsageReportAPISecret string
-
-	// ModelPolicyAPISecret protects the model-policy management API. It is a
-	// separate credential so usage readers cannot change access policy.
-	ModelPolicyAPISecret string
+	// PartnerUserKeyGroup is the MaaS group presented for every partner key
+	// operation. Deliberately no default: the group must exist in MaaS with
+	// an accessible subscription, and inventing one silently would mint keys
+	// nobody can use. Unset leaves the key endpoints at 503.
+	PartnerUserKeyGroup string
 	// OrgInviteTTLHours bounds a key invite link: a single-use token that
 	// nobody opened is worthless once it expires.
 	OrgInviteTTLHours int
@@ -223,8 +220,7 @@ func Load() Config {
 		DefaultGroup:              envDefault("DEFAULT_GROUP", "default"),
 		M2MAuthRequired:           envBool("M2M_AUTH_REQUIRED", false),
 		M2MSharedSecret:           os.Getenv("M2M_SHARED_SECRET"),
-		UsageReportAPISecret:      os.Getenv("USAGE_REPORT_API_SECRET"),
-		ModelPolicyAPISecret:      os.Getenv("MODEL_POLICY_API_SECRET"),
+		PartnerUserKeyGroup:       os.Getenv("PARTNER_USER_KEY_GROUP"),
 		OrgInviteTTLHours:         envInt("ORG_INVITE_TTL_HOURS", 72),
 		KeyRotationOverlapDays:    envInt("KEY_ROTATION_OVERLAP_DAYS", 7),
 		// Off by default (PR #19 review): shipping the build must not be
