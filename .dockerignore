@@ -1,0 +1,7 @@
+.git
+.state
+*.secret
+*.pem
+*.env
+coverage*
+metering-service

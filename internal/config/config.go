@@ -7,6 +7,7 @@
 package config
 
 import (
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -19,6 +20,13 @@ const DefaultMonthlyTokenQuota = 100_000_000
 
 // Config is the resolved runtime configuration.
 type Config struct {
+	// DashboardJWT enables offline RS256 login when a public key is supplied.
+	// Issuer, audience and public HTTPS origin are mandatory in that mode.
+	DashboardJWTKeyFile  string
+	DashboardJWTIssuer   string
+	DashboardJWTAudience string
+	DashboardOrigin      string
+
 	// DatabaseURL is the PostgreSQL connection string. Required.
 	DatabaseURL string
 
@@ -208,13 +216,17 @@ func (k Kubernetes) Enabled() bool {
 // Load resolves configuration from the environment.
 func Load() Config {
 	return Config{
-		DatabaseURL:       os.Getenv("DATABASE_URL"),
-		Port:              envDefault("PORT", "8080"),
-		MonthlyTokenQuota: envFloat("MONTHLY_TOKEN_QUOTA", DefaultMonthlyTokenQuota),
-		EventSource:       envDefault("EVENT_SOURCE", "ai-gateway"),
-		UserHeader:        envDefault("AUTH_USER_HEADER", "X-Forwarded-User"),
-		GroupsHeader:      envDefault("AUTH_GROUPS_HEADER", "X-Forwarded-Groups"),
-		AdminUsers:        envList("ADMIN_USERS"),
+		DashboardJWTKeyFile:  os.Getenv("DASHBOARD_JWT_PUBLIC_KEY_FILE"),
+		DashboardJWTIssuer:   os.Getenv("DASHBOARD_JWT_ISSUER"),
+		DashboardJWTAudience: os.Getenv("DASHBOARD_JWT_AUDIENCE"),
+		DashboardOrigin:      os.Getenv("DASHBOARD_ORIGIN"),
+		DatabaseURL:          os.Getenv("DATABASE_URL"),
+		Port:                 envDefault("PORT", "8080"),
+		MonthlyTokenQuota:    envFloat("MONTHLY_TOKEN_QUOTA", DefaultMonthlyTokenQuota),
+		EventSource:          envDefault("EVENT_SOURCE", "ai-gateway"),
+		UserHeader:           envDefault("AUTH_USER_HEADER", "X-Forwarded-User"),
+		GroupsHeader:         envDefault("AUTH_GROUPS_HEADER", "X-Forwarded-Groups"),
+		AdminUsers:           envList("ADMIN_USERS"),
 		// The gateway operators. Set via the SUPERADMIN_USERS deployment
 		// env var (comma/space separated); empty means no one holds the
 		// super-admin surfaces, so the deployment must set it explicitly.
@@ -322,7 +334,7 @@ func envBool(key string, fallback bool) bool {
 
 func envFloat(key string, fallback float64) float64 {
 	v, err := strconv.ParseFloat(os.Getenv(key), 64)
-	if err != nil || v <= 0 {
+	if err != nil || v < 0 || math.IsNaN(v) || math.IsInf(v, 0) {
 		return fallback
 	}
 	return v

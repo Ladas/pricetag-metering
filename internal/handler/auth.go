@@ -35,14 +35,16 @@ type sessionPayload struct {
 	Groups   []string `json:"groups"`
 	// As, when set by an admin via HandleImpersonate, swaps the identity
 	// header to this user for the rest of the session.
-	As  string `json:"as,omitempty"`
-	Exp int64  `json:"exp"`
+	As    string `json:"as,omitempty"`
+	Exp   int64  `json:"exp"`
+	KeyID string `json:"key_id,omitempty"`
 }
 
 type AuthHandler struct {
 	cfg        config.Config
 	secret     []byte
 	httpClient *http.Client
+	jwt        *jwtLogin
 	// orgStore backs the post-login manager redirect: people whose directory
 	// record has reports land on /manager, the view they actually came for.
 	// Optional — a nil store (or a lookup failure) keeps the old behaviour
@@ -55,8 +57,15 @@ type AuthHandler struct {
 // deployments).
 func (h *AuthHandler) SetOrgStore(s *storage.Store) { h.orgStore = s }
 
-func NewAuthHandler(cfg config.Config) *AuthHandler {
+func NewAuthHandler(cfg config.Config) (*AuthHandler, error) {
+	login, err := newJWTLogin(cfg)
+	if err != nil {
+		return nil, err
+	}
 	secret := []byte(os.Getenv("SESSION_SECRET"))
+	if login != nil && len(secret) < 32 {
+		return nil, fmt.Errorf("JWT login requires a persistent SESSION_SECRET of at least 32 bytes")
+	}
 	if len(secret) == 0 {
 		secret = make([]byte, 32)
 		if _, err := rand.Read(secret); err != nil {
@@ -68,7 +77,8 @@ func NewAuthHandler(cfg config.Config) *AuthHandler {
 		cfg:        cfg,
 		secret:     secret,
 		httpClient: &http.Client{Timeout: 10 * time.Second},
-	}
+		jwt:        login,
+	}, nil
 }
 
 func (h *AuthHandler) sign(data []byte) string {
@@ -82,12 +92,15 @@ func (h *AuthHandler) verify(data []byte, sig string) bool {
 	return hmac.Equal([]byte(expected), []byte(sig))
 }
 
-func (h *AuthHandler) setCookie(w http.ResponseWriter, username string, groups []string, as string) {
+func (h *AuthHandler) setCookie(w http.ResponseWriter, username string, groups []string, as string, expires time.Time) {
 	payload := sessionPayload{
 		Username: username,
 		Groups:   groups,
 		As:       as,
-		Exp:      time.Now().Add(cookieMaxAge).Unix(),
+		Exp:      expires.Unix(),
+	}
+	if h.jwt != nil {
+		payload.KeyID = h.jwt.keyID
 	}
 	data, _ := json.Marshal(payload)
 	sig := h.sign(data)
@@ -97,7 +110,8 @@ func (h *AuthHandler) setCookie(w http.ResponseWriter, username string, groups [
 		Name:     cookieName,
 		Value:    value,
 		Path:     "/",
-		MaxAge:   int(cookieMaxAge.Seconds()),
+		MaxAge:   max(1, int(time.Until(expires).Seconds())),
+		Expires:  expires,
 		HttpOnly: true,
 		Secure:   true,
 		SameSite: http.SameSiteLaxMode,
@@ -124,7 +138,7 @@ func (h *AuthHandler) readCookie(r *http.Request) *sessionPayload {
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return nil
 	}
-	if time.Now().Unix() > payload.Exp {
+	if time.Now().Unix() >= payload.Exp || (h.jwt != nil && payload.KeyID != h.jwt.keyID) {
 		return nil
 	}
 	return &payload
@@ -137,8 +151,18 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "login page not found", http.StatusInternalServerError)
 			return
 		}
+		if h.jwt != nil {
+			page := strings.NewReplacer(
+				"Sign in with your MaaS API key", "Sign in with your gateway JWT",
+				"Invalid API key. Check your key and try again.", "Invalid or expired JWT. Ask your administrator for a new token.",
+				"API Key", "Gateway JWT",
+				"sk-oai-...", "Paste your gateway token",
+				"Your key was provided by your team lead.", "Use the same token as your harness. Your session lasts at most eight hours and never outlives the token.",
+			).Replace(string(data))
+			data = []byte(page)
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Cache-Control", "no-store")
 		w.Write(data)
 		return
 	}
@@ -148,10 +172,27 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.ParseForm()
-	apiKey := strings.TrimSpace(r.FormValue("api_key"))
+	if !h.checkBrowserOrigin(w, r) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16384)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid login form", http.StatusBadRequest)
+		return
+	}
+	apiKey := strings.TrimSpace(r.PostForm.Get("api_key"))
 	if apiKey == "" {
 		http.Redirect(w, r, "/login?error=invalid", http.StatusFound)
+		return
+	}
+	if h.jwt != nil {
+		session, err := h.jwt.validate(apiKey)
+		if err != nil {
+			http.Redirect(w, r, "/login?error=invalid", http.StatusFound)
+			return
+		}
+		h.setCookie(w, session.Username, nil, "", time.Unix(session.Exp, 0))
+		http.Redirect(w, r, h.loginDestination(r, session.Username), http.StatusFound)
 		return
 	}
 
@@ -193,7 +234,7 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("user logged in", "username", result.Username)
-	h.setCookie(w, result.Username, result.Groups, "")
+	h.setCookie(w, result.Username, result.Groups, "", time.Now().Add(cookieMaxAge))
 	http.Redirect(w, r, h.loginDestination(r, result.Username), http.StatusFound)
 }
 
@@ -229,6 +270,12 @@ func (h *AuthHandler) loginDestination(r *http.Request, username string) string 
 // mid-impersonation. "View as" is an operator tool — regular admins get the
 // org-wide usage view instead, not another person's personal page.
 func (h *AuthHandler) HandleImpersonate(w http.ResponseWriter, r *http.Request) {
+	// The legacy UI changes impersonation through GET. Keep that optional
+	// feature disabled in standalone JWT mode until it has a POST form.
+	if h.jwt != nil {
+		http.NotFound(w, r)
+		return
+	}
 	session := h.readCookie(r)
 	if session == nil {
 		http.Redirect(w, r, "/login", http.StatusFound)
@@ -248,13 +295,13 @@ func (h *AuthHandler) HandleImpersonate(w http.ResponseWriter, r *http.Request) 
 
 	target := strings.TrimSpace(r.URL.Query().Get("as"))
 	if target == "" {
-		h.setCookie(w, session.Username, session.Groups, "")
+		h.setCookie(w, session.Username, session.Groups, "", time.Unix(session.Exp, 0))
 		http.Redirect(w, r, "/dashboard", http.StatusFound)
 		return
 	}
 
 	slog.Info("admin viewing as user", "admin", session.Username, "as", target)
-	h.setCookie(w, session.Username, session.Groups, target)
+	h.setCookie(w, session.Username, session.Groups, target, time.Unix(session.Exp, 0))
 	// /dashboard serves the personal user page while impersonating (the
 	// operator dashboard is only shown for a real, non-swapped admin view).
 	// ?to= lets the admin land on /manager instead, to see exactly what a
@@ -285,14 +332,31 @@ func (h *AuthHandler) HandleLogout(w http.ResponseWriter, r *http.Request) {
 // work unchanged.
 func (h *AuthHandler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		session := h.readCookie(r)
+		if h.jwt != nil {
+			w.Header().Set("Cache-Control", "no-store")
+		}
+		session, bearer := h.bearerSession(r)
+		if !bearer {
+			if !h.checkBrowserOrigin(w, r) {
+				return
+			}
+			session = h.readCookie(r)
+		}
 		if session == nil {
+			if bearer {
+				http.Error(w, "invalid caller credential", http.StatusUnauthorized)
+				return
+			}
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
+		r.Header.Del(h.cfg.UserHeader)
+		r.Header.Del(h.cfg.GroupsHeader)
+		r.Header.Del(realUserHeader)
 		r.Header.Set(h.cfg.UserHeader, session.Username)
 		if len(session.Groups) > 0 {
-			r.Header.Set(h.cfg.GroupsHeader, fmt.Sprintf(`["%s"]`, strings.Join(session.Groups, `","`)))
+			groups, _ := json.Marshal(session.Groups)
+			r.Header.Set(h.cfg.GroupsHeader, string(groups))
 		}
 		// Admin "view as" mode: swap the identity header to the target user
 		// so every downstream handler (per-user scoping, IsAdmin) behaves

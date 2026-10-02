@@ -947,10 +947,10 @@ function resolveModelName(crdName) {
 /* ================================================================
    Tabs — one panel visible, lazy load on first open, deep-linkable
    ================================================================ */
-var TABS = ['users', 'keys', 'people', 'platform', 'quotas'];
+var TABS = window.standaloneJWT ? ['quotas', 'people'] : ['users', 'keys', 'people', 'platform', 'quotas'];
 
 function showTab(name, pushHash) {
-  if (TABS.indexOf(name) < 0) name = 'users';
+  if (TABS.indexOf(name) < 0) name = TABS[0];
   activeTab = name;
   for (var i = 0; i < TABS.length; i++) {
     var t = TABS[i];
@@ -1266,7 +1266,7 @@ function deleteQuotaOverride(scope, principal) {
 /* ================================================================
    Init — friendly model map, then the saved/deep-linked tab
    ================================================================ */
-fetchJSON('/api/v1/admin/models').then(function(models) {
+if (!window.standaloneJWT) fetchJSON('/api/v1/admin/models').then(function(models) {
   (Array.isArray(models) ? models : []).forEach(function(m) {
     var friendly = (m.providerRefs && m.providerRefs[0] && m.providerRefs[0].targetModel) || m.name;
     modelNameMap[m.name] = friendly;
@@ -1277,7 +1277,7 @@ fetchJSON('/api/v1/admin/models').then(function(models) {
   var h = (location.hash || '').replace('#', '');
   var start = TABS.indexOf(h) >= 0 ? h : null;
   if (!start) { try { start = localStorage.getItem('admin-tab'); } catch (e) {} }
-  showTab(start && TABS.indexOf(start) >= 0 ? start : 'users');
+  showTab(start && TABS.indexOf(start) >= 0 ? start : TABS[0]);
   touchUpdated();
 })();
 
@@ -2455,7 +2455,7 @@ function submitAddUser() {
     errEl.innerHTML = '<div class="err-msg" style="margin-top:8px;text-align:left">Email is required.</div>';
     return;
   }
-  if (!group) {
+  if (!group && !window.standaloneJWT) {
     errEl.innerHTML = '<div class="err-msg" style="margin-top:8px;text-align:left">Group is required.</div>';
     return;
   }

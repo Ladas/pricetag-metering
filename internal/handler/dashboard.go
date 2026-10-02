@@ -30,7 +30,7 @@ func (h *DashboardHandler) ServeDashboard(w http.ResponseWriter, r *http.Request
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Write(data)
+	w.Write(standalonePage(data, h.cfg))
 }
 
 func (h *DashboardHandler) HandleOverview(w http.ResponseWriter, r *http.Request) {

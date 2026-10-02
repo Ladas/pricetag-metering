@@ -77,6 +77,12 @@ func IsSuperAdminUsername(cfg config.Config, username string) bool {
 		return false
 	}
 	for _, admin := range cfg.SuperAdminUsers {
+		if cfg.DashboardJWTKeyFile != "" {
+			if username == admin {
+				return true
+			}
+			continue
+		}
 		if strings.EqualFold(username, admin) {
 			return true
 		}
@@ -126,7 +132,7 @@ func (h *AdminHandler) ServeAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Write(data)
+	w.Write(standalonePage(data, h.cfg))
 }
 
 func (h *AdminHandler) ServeRouting(w http.ResponseWriter, r *http.Request) {

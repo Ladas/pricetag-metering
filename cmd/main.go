@@ -171,7 +171,11 @@ func main() {
 	maasClient := maasapi.NewClient(maasAPIURL, maasTenant)
 
 	adminHandler := handler.NewAdminHandler(k8sClient, maasClient, cfg)
-	authHandler := handler.NewAuthHandler(cfg)
+	authHandler, err := handler.NewAuthHandler(cfg)
+	if err != nil {
+		slog.Error("invalid dashboard authentication configuration", "error", err)
+		os.Exit(1)
+	}
 	authHandler.SetOrgStore(store) // managers land on /manager after login
 	keysHandler := handler.NewKeysHandler(k8sClient, cfg, store)
 	profilesHandler := handler.NewProfilesHandler(store)
