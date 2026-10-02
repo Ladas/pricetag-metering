@@ -12,11 +12,7 @@ import (
 
 func TestServeWelcomeSubstitution(t *testing.T) {
 	h := NewDashboardHandler(nil, config.Config{
-		Welcome: config.Welcome{
-			GatewayURL:   "https://gateway.test",
-			DashboardURL: "https://dash.test",
-		},
-		MonthlyTokenQuota: 10_000_000_000,
+		Welcome: config.Welcome{GatewayURL: "https://gateway.test"},
 	})
 	req := httptest.NewRequest(http.MethodGet, "https://dashboard.test/welcome", nil)
 	rec := httptest.NewRecorder()
@@ -28,42 +24,32 @@ func TestServeWelcomeSubstitution(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"https://gateway.test",
-		"https://dash.test",
-		"10B monthly allowance",
-		"Inferact/Qwen3.8-Flash-Next-NVFP4",
+		"Welcome to",
+		"Claude Code",
+		"Codex",
+		"OpenCode",
+		"modelPicker",
+		"modelSettings",
 		"rits/zai-org/glm-5-3",
-		"GLM 5.3",
-		"free: $0 for every token type",
-		"effortLevel",
-		"Set up Hermes CLI",
-		"~/.hermes/config.yaml",
-		"opencode-enmaas",
-		"XDG_CONFIG_HOME",
-		"gpt-5.6-luna",
+		"OpenCode does not need a separate model-picker block",
+		"https://devservices.dpp.openshift.com/support/enmaas/",
 		"/v1/messages",
 		"/v1/chat/completions",
 		"/v1/responses",
-		"https://gateway.test/v1",
-		"anthropic-version",
-		"matching API's model-list envelope",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page missing %q", want)
 		}
 	}
-	// Configured URLs must suppress the example fallbacks, and no
-	// placeholder may survive substitution.
-	for _, absent := range []string{"gateway.example.com", "{{"} {
-		if strings.Contains(body, absent) {
-			t.Errorf("page unexpectedly contains %q", absent)
-		}
+	if strings.Contains(body, "{{") {
+		t.Errorf("page contains unsubstituted placeholder")
 	}
 }
 
 var anyPlaceholder = regexp.MustCompile(`\{\{[A-Z_]+\}\}`)
 
 func TestServeWelcomeFallbacks(t *testing.T) {
-	h := NewDashboardHandler(nil, config.Config{MonthlyTokenQuota: 100_000_000})
+	h := NewDashboardHandler(nil, config.Config{})
 	req := httptest.NewRequest(http.MethodGet, "https://dashboard.test/welcome", nil)
 	rec := httptest.NewRecorder()
 	h.ServeWelcome(rec, req)
@@ -72,10 +58,7 @@ func TestServeWelcomeFallbacks(t *testing.T) {
 	if m := anyPlaceholder.FindString(body); m != "" {
 		t.Errorf("unsubstituted placeholder %s in served page", m)
 	}
-	for _, want := range []string{
-		welcomeGatewayFallback, welcomeDashboardFallback,
-		"100M monthly allowance",
-	} {
+	for _, want := range []string{welcomeGatewayFallback} {
 		if !strings.Contains(body, want) {
 			t.Errorf("fallback page missing %q", want)
 		}
@@ -91,8 +74,8 @@ func TestServeWelcomeFallbackIgnoresForwardedOrigin(t *testing.T) {
 	h.ServeWelcome(rec, req)
 
 	body := rec.Body.String()
-	if !strings.Contains(body, welcomeDashboardFallback) {
-		t.Fatalf("fallback page missing trusted dashboard fallback %q", welcomeDashboardFallback)
+	if !strings.Contains(body, welcomeGatewayFallback) {
+		t.Fatalf("fallback page missing trusted gateway fallback %q", welcomeGatewayFallback)
 	}
 	for _, forbidden := range []string{"attacker.example", "evil.example", "javascript:alert"} {
 		if strings.Contains(body, forbidden) {
@@ -103,14 +86,13 @@ func TestServeWelcomeFallbackIgnoresForwardedOrigin(t *testing.T) {
 
 func TestServeWelcomeEscapesConfiguredURLs(t *testing.T) {
 	h := NewDashboardHandler(nil, config.Config{Welcome: config.Welcome{
-		GatewayURL:   `https://gateway.test/?q="<script>`,
-		DashboardURL: `https://dashboard.test/?q="<script>`,
+		GatewayURL: `https://gateway.test/?q="<script>`,
 	}})
 	rec := httptest.NewRecorder()
 	h.ServeWelcome(rec, httptest.NewRequest(http.MethodGet, "https://dashboard.test/welcome", nil))
 
 	body := rec.Body.String()
-	for _, raw := range []string{`https://gateway.test/?q="`, `https://dashboard.test/?q="`} {
+	for _, raw := range []string{`https://gateway.test/?q="`} {
 		if strings.Contains(body, raw) {
 			t.Fatalf("configured URL was inserted as raw HTML: %q", raw)
 		}
