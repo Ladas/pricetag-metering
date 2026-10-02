@@ -192,12 +192,12 @@ func main() {
 	mux.HandleFunc("/api/v1/customers/", m2mAuth(entitlementsHandler.HandleEntitlement))
 	// Partner APIs use endpoint-specific bearer credentials in addition to any
 	// Route/AuthPolicy. This protects direct Service and port-forward access.
-	mux.HandleFunc("/api/v1/usage/users/", handler.RequirePartnerAPIAuth(cfg.UsageReportAPISecret, usageReportHandler.HandleUserUsage))
-	mux.HandleFunc("/api/v1/usage/reports", handler.RequirePartnerAPIAuth(cfg.UsageReportAPISecret, partnerUserUsageHandler.HandleBatchUserUsage))
-	mux.HandleFunc("/api/v1/models", handler.RequirePartnerAPIAuth(cfg.ModelCatalogAPISecret, modelCatalogHandler.Handle))
+	mux.HandleFunc("/api/v1/usage/users/", handler.RequirePartnerAPIAuthAny(cfg.UsageReportAPISecrets, usageReportHandler.HandleUserUsage))
+	mux.HandleFunc("/api/v1/usage/reports", handler.RequirePartnerAPIAuthAny(cfg.UsageReportAPISecrets, partnerUserUsageHandler.HandleBatchUserUsage))
+	mux.HandleFunc("/api/v1/models", handler.RequirePartnerAPIAuthAny(cfg.ModelCatalogAPISecrets, modelCatalogHandler.Handle))
 	mux.HandleFunc("/api/v1/users", handler.RequirePartnerAPIAuth(cfg.UserManagementAPISecret, partnerUsersHandler.HandleUsers))
 	mux.HandleFunc("/api/v1/users/", handler.RequirePartnerAPIAuth(cfg.UserManagementAPISecret, partnerUsersHandler.HandleUsers))
-	mux.HandleFunc("/api/v1/model-policies/users/", handler.RequirePartnerAPIAuth(cfg.ModelPolicyAPISecret, userModelPolicyHandler.HandleUserModelPolicy))
+	mux.HandleFunc("/api/v1/model-policies/users/", handler.RequirePartnerAPIAuthAny(cfg.ModelPolicyAPISecrets, userModelPolicyHandler.HandleUserModelPolicy))
 	// /api/v1/team-usage was REMOVED on purpose: it sat outside auth, took
 	// the group from the query string, and defaulted to a hard-coded team.
 	// Its replacement is /api/v1/org/usage below, which is authenticated
