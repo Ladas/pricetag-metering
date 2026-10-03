@@ -71,6 +71,12 @@ type Config struct {
 	ModelPolicyAPISecret    string
 	UserManagementAPISecret string
 	ModelCatalogAPISecret   string
+	// Additional endpoint credentials allow AIR and AIBT to use separate
+	// least-privilege bearer tokens while preserving the original singular
+	// variables for existing deployments.
+	UsageReportAPISecrets  []string
+	ModelPolicyAPISecrets  []string
+	ModelCatalogAPISecrets []string
 
 	// PartnerUserKeyGroup is the MaaS group presented for every partner key
 	// operation. Deliberately no default: the group must exist in MaaS with
@@ -231,6 +237,9 @@ func Load() Config {
 		ModelPolicyAPISecret:      os.Getenv("MODEL_POLICY_API_SECRET"),
 		UserManagementAPISecret:   os.Getenv("USER_MANAGEMENT_API_SECRET"),
 		ModelCatalogAPISecret:     os.Getenv("MODEL_CATALOG_API_SECRET"),
+		UsageReportAPISecrets:     envSecrets("USAGE_REPORT_API_SECRET", "USAGE_REPORT_API_SECRET_AIR", "USAGE_REPORT_API_SECRET_AIBT"),
+		ModelPolicyAPISecrets:     envSecrets("MODEL_POLICY_API_SECRET", "MODEL_POLICY_API_SECRET_AIBT"),
+		ModelCatalogAPISecrets:    envSecrets("MODEL_CATALOG_API_SECRET", "MODEL_CATALOG_API_SECRET_AIBT"),
 		PartnerUserKeyGroup:       os.Getenv("PARTNER_USER_KEY_GROUP"),
 		OrgInviteTTLHours:         envInt("ORG_INVITE_TTL_HOURS", 72),
 		KeyRotationOverlapDays:    envInt("KEY_ROTATION_OVERLAP_DAYS", 7),
@@ -300,6 +309,20 @@ func envList(key string) []string {
 	for _, p := range parts {
 		if trimmed := strings.TrimSpace(p); trimmed != "" {
 			result = append(result, trimmed)
+		}
+	}
+	return result
+}
+
+func envSecrets(keys ...string) []string {
+	var result []string
+	seen := make(map[string]struct{})
+	for _, key := range keys {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			if _, ok := seen[value]; !ok {
+				result = append(result, value)
+				seen[value] = struct{}{}
+			}
 		}
 	}
 	return result

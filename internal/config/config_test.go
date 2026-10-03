@@ -53,3 +53,22 @@ func TestPartnerAPISecretsLoadFromEnvironment(t *testing.T) {
 		t.Fatalf("partner API secrets did not load from environment")
 	}
 }
+
+func TestPartnerAPIAdditionalSecretsLoadFromEnvironment(t *testing.T) {
+	t.Setenv("USAGE_REPORT_API_SECRET", "legacy-usage")
+	t.Setenv("USAGE_REPORT_API_SECRET_AIR", "air-usage")
+	t.Setenv("USAGE_REPORT_API_SECRET_AIBT", "aibt-usage")
+	t.Setenv("MODEL_POLICY_API_SECRET", "legacy-policy")
+	t.Setenv("MODEL_POLICY_API_SECRET_AIBT", "aibt-policy")
+	t.Setenv("MODEL_CATALOG_API_SECRET", "legacy-catalog")
+	t.Setenv("MODEL_CATALOG_API_SECRET_AIBT", "aibt-catalog")
+	cfg := Load()
+	wantUsage := []string{"legacy-usage", "air-usage", "aibt-usage"}
+	wantPolicy := []string{"legacy-policy", "aibt-policy"}
+	wantCatalog := []string{"legacy-catalog", "aibt-catalog"}
+	if !reflect.DeepEqual(cfg.UsageReportAPISecrets, wantUsage) ||
+		!reflect.DeepEqual(cfg.ModelPolicyAPISecrets, wantPolicy) ||
+		!reflect.DeepEqual(cfg.ModelCatalogAPISecrets, wantCatalog) {
+		t.Fatalf("additional partner API secrets loaded incorrectly: usage=%v policy=%v catalog=%v", cfg.UsageReportAPISecrets, cfg.ModelPolicyAPISecrets, cfg.ModelCatalogAPISecrets)
+	}
+}

@@ -86,3 +86,14 @@ func TestRequirePartnerAPIAuthAcceptsBearerSecret(t *testing.T) {
 		t.Fatal("valid partner bearer secret did not reach the handler")
 	}
 }
+
+func TestRequirePartnerAPIAuthAnyAcceptsConfiguredPartner(t *testing.T) {
+	reached := false
+	h := RequirePartnerAPIAuthAny([]string{"legacy", "air", "aibt"}, func(http.ResponseWriter, *http.Request) { reached = true })
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer air")
+	h(httptest.NewRecorder(), req)
+	if !reached {
+		t.Fatal("configured additional partner bearer did not reach the handler")
+	}
+}
