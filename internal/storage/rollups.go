@@ -76,8 +76,10 @@ const (
 	metaParityCheckedAt   = "parity_checked_at"
 	metaToolRollupsReady  = "tool_rollups_ready"
 	metaToolRollupVersion = "tool_rollup_normalization_version"
-	toolRollupVersion     = "2"
-	costBackfillStep      = 50000
+	// Bump when dashboardToolSQL normalization changes. Existing deployments
+	// otherwise keep serving a ready table built with the old classifier.
+	toolRollupVersion = "4"
+	costBackfillStep  = 50000
 )
 
 // ---- Hour locks (part B) ----
@@ -154,6 +156,9 @@ const dashboardToolSQL = `CASE
 	WHEN btrim(lower(coalesce(e.user_agent, ''))) LIKE 'codex-tui%' OR btrim(lower(coalesce(e.user_agent, ''))) LIKE 'codex/%' THEN 'Codex'
 	WHEN btrim(lower(coalesce(e.user_agent, ''))) = 'opencode' OR btrim(lower(coalesce(e.user_agent, ''))) LIKE 'opencode/%' OR btrim(lower(coalesce(e.user_agent, ''))) LIKE 'opencode-%' OR btrim(lower(coalesce(e.user_agent, ''))) LIKE 'opencode.%' THEN 'OpenCode'
 	WHEN btrim(lower(coalesce(e.user_agent, ''))) = 'pi' OR btrim(lower(coalesce(e.user_agent, ''))) LIKE 'pi/%' OR btrim(lower(coalesce(e.user_agent, ''))) LIKE 'pi-%' OR btrim(lower(coalesce(e.user_agent, ''))) LIKE 'pi.%' OR btrim(lower(coalesce(e.user_agent, ''))) LIKE 'pi %' THEN 'Pi'
+	WHEN btrim(lower(coalesce(e.user_agent, ''))) LIKE 'charm-crush/%' THEN 'Charm-Crush'
+	WHEN btrim(lower(coalesce(e.user_agent, ''))) LIKE 'openai/%' THEN 'OpenAI'
+	WHEN btrim(lower(coalesce(e.user_agent, ''))) LIKE 'omp/%' THEN 'omp'
 	WHEN btrim(lower(coalesce(e.user_agent, ''))) LIKE 'curl/%' THEN 'curl'
 	ELSE 'Other'
 END`
