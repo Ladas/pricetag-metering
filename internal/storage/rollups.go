@@ -69,13 +69,15 @@ const upsertToolRollupSQL = `
 		cost_usd = usage_tool_hourly.cost_usd + EXCLUDED.cost_usd`
 
 const (
-	metaCostWatermark    = "cost_backfill_max_id"
-	metaRollupWatermark  = "rollup_rebuilt_through_hour" // last fully rebuilt hour, inclusive
-	metaRollupsReady     = "rollups_ready"
-	metaParityHealthy    = "parity_healthy"
-	metaParityCheckedAt  = "parity_checked_at"
-	metaToolRollupsReady = "tool_rollups_ready"
-	costBackfillStep     = 50000
+	metaCostWatermark     = "cost_backfill_max_id"
+	metaRollupWatermark   = "rollup_rebuilt_through_hour" // last fully rebuilt hour, inclusive
+	metaRollupsReady      = "rollups_ready"
+	metaParityHealthy     = "parity_healthy"
+	metaParityCheckedAt   = "parity_checked_at"
+	metaToolRollupsReady  = "tool_rollups_ready"
+	metaToolRollupVersion = "tool_rollup_normalization_version"
+	toolRollupVersion     = "2"
+	costBackfillStep      = 50000
 )
 
 // ---- Hour locks (part B) ----
@@ -151,7 +153,7 @@ const dashboardToolSQL = `CASE
 	WHEN btrim(lower(coalesce(e.user_agent, ''))) LIKE 'claude-cli%' OR btrim(lower(coalesce(e.user_agent, ''))) LIKE 'claude-code%' THEN 'Claude Code'
 	WHEN btrim(lower(coalesce(e.user_agent, ''))) LIKE 'codex-tui%' OR btrim(lower(coalesce(e.user_agent, ''))) LIKE 'codex/%' THEN 'Codex'
 	WHEN btrim(lower(coalesce(e.user_agent, ''))) = 'opencode' OR btrim(lower(coalesce(e.user_agent, ''))) LIKE 'opencode/%' OR btrim(lower(coalesce(e.user_agent, ''))) LIKE 'opencode-%' OR btrim(lower(coalesce(e.user_agent, ''))) LIKE 'opencode.%' THEN 'OpenCode'
-	WHEN btrim(lower(coalesce(e.user_agent, ''))) = 'pi' OR btrim(lower(coalesce(e.user_agent, ''))) LIKE 'pi/%' OR btrim(lower(coalesce(e.user_agent, ''))) LIKE 'pi-%' OR btrim(lower(coalesce(e.user_agent, ''))) LIKE 'pi.%' THEN 'Pi'
+	WHEN btrim(lower(coalesce(e.user_agent, ''))) = 'pi' OR btrim(lower(coalesce(e.user_agent, ''))) LIKE 'pi/%' OR btrim(lower(coalesce(e.user_agent, ''))) LIKE 'pi-%' OR btrim(lower(coalesce(e.user_agent, ''))) LIKE 'pi.%' OR btrim(lower(coalesce(e.user_agent, ''))) LIKE 'pi %' THEN 'Pi'
 	WHEN btrim(lower(coalesce(e.user_agent, ''))) LIKE 'curl/%' THEN 'curl'
 	ELSE 'Other'
 END`
@@ -262,7 +264,11 @@ func (s *Store) EnsureRollupsBackfilled(ctx context.Context) {
 // rolling deployment never serves an empty tool table as authoritative.
 func (s *Store) ToolRollupsReady() bool {
 	v, ok := s.metaGet(context.Background(), metaToolRollupsReady)
-	return ok && v == "true"
+	if !ok || v != "true" {
+		return false
+	}
+	version, ok := s.metaGet(context.Background(), metaToolRollupVersion)
+	return ok && version == toolRollupVersion
 }
 
 // ensureToolRollups rebuilds the additive tool table while holding an
@@ -272,6 +278,14 @@ func (s *Store) ToolRollupsReady() bool {
 func (s *Store) ensureToolRollups(ctx context.Context) error {
 	if s.ToolRollupsReady() {
 		return nil
+	}
+	// A pre-versioned deployment may still have ready=true. Make all readers
+	// fall back to raw events while the additive table is rebuilt from the
+	// source ledger.
+	if ready, ok := s.metaGet(ctx, metaToolRollupsReady); ok && ready == "true" {
+		if err := s.metaSet(ctx, metaToolRollupsReady, "false"); err != nil {
+			return err
+		}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -292,9 +306,12 @@ func (s *Store) ensureToolRollups(ctx context.Context) error {
 	// commits. Recheck while holding the exclusive table lock so waiters do
 	// not repeat the full historical rebuild. The readiness marker is written
 	// in this same transaction below, leaving no commit-to-marker race.
-	var ready string
+	var ready, version string
 	err = tx.QueryRowContext(ctx, `SELECT value FROM rollup_meta WHERE key = $1`, metaToolRollupsReady).Scan(&ready)
-	if err == nil && ready == "true" {
+	if err == nil {
+		_ = tx.QueryRowContext(ctx, `SELECT value FROM rollup_meta WHERE key = $1`, metaToolRollupVersion).Scan(&version)
+	}
+	if err == nil && ready == "true" && version == toolRollupVersion {
 		return tx.Commit()
 	}
 	if err != nil && err != sql.ErrNoRows {
@@ -314,6 +331,11 @@ func (s *Store) ensureToolRollups(ctx context.Context) error {
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO rollup_meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
 		metaToolRollupsReady, "true"); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO rollup_meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+		metaToolRollupVersion, toolRollupVersion); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

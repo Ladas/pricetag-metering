@@ -1179,7 +1179,7 @@ func dashboardTool(userAgent string) string {
 		return "Codex"
 	case ua == "opencode" || strings.HasPrefix(ua, "opencode/") || strings.HasPrefix(ua, "opencode-") || strings.HasPrefix(ua, "opencode."):
 		return "OpenCode"
-	case ua == "pi" || strings.HasPrefix(ua, "pi/") || strings.HasPrefix(ua, "pi-") || strings.HasPrefix(ua, "pi."):
+	case ua == "pi" || strings.HasPrefix(ua, "pi/") || strings.HasPrefix(ua, "pi-") || strings.HasPrefix(ua, "pi.") || strings.HasPrefix(ua, "pi "):
 		return "Pi"
 	case strings.HasPrefix(ua, "curl/"):
 		return "curl"

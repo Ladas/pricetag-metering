@@ -553,7 +553,7 @@ function friendlyClient(ua){
    if(normalized.startsWith('claude-cli')||normalized.startsWith('claude-code')) return 'Claude Code';
    if(normalized.startsWith('codex-tui')||normalized.startsWith('codex/')) return 'Codex';
    if(normalized==='opencode'||normalized.startsWith('opencode/')||normalized.startsWith('opencode-')||normalized.startsWith('opencode.')) return 'OpenCode';
-   if(normalized==='pi'||normalized.startsWith('pi/')||normalized.startsWith('pi-')||normalized.startsWith('pi.')) return 'Pi';
+   if(normalized==='pi'||normalized.startsWith('pi/')||normalized.startsWith('pi-')||normalized.startsWith('pi.')||normalized.startsWith('pi ')) return 'Pi';
    if(normalized.startsWith('curl/')) return 'curl';
    return 'Other';
 }
