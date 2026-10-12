@@ -88,8 +88,6 @@ tr.clickable{cursor:pointer}
 .tl-toggle button{background:var(--bg-card);color:var(--text2);border:1px solid var(--border);padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px}
 .tl-toggle button.active{background:var(--blue);color:#fff;border-color:var(--blue)}
 
-.timeline-box{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:24px}
-.timeline-box canvas{max-height:300px}
 
 .expand-detail{padding:4px 0}
 .expand-detail table{border:none!important}
@@ -371,15 +369,6 @@ tr.clickable{cursor:pointer}
   </div>
 </div>
 
- <div class="timeline-box">
-  <h2>Tokens Over Time</h2>
-  <div class="tl-toggle" id="tl-toggle">
-    <button data-gb="model" class="active">By Model</button>
-    <button data-gb="user">By User</button>
-  </div>
-  <canvas id="timeline-chart"></canvas>
-</div>
-
 </main>
 
 <!-- ── Subtle welcome-page background animation (issue #11) ────────────── -->
@@ -458,12 +447,12 @@ tr.clickable{cursor:pointer}
 </script>
 
 <script>
-let range='mtd', groupFilter='', userFilter=[], modelFilter='', tlGroupBy='model';
+let range='mtd', groupFilter='', userFilter=[], modelFilter='';
 let isAdmin=false;        // org-wide Usage view (all users)
 let isSuperAdmin=false;   // operator tools: Routing/Compression/Admin nav + "view as"
 let modelMetric='tokens', userPieMetric='cost';
 let savingsRef='claude-opus-4-8';
-let tokenChart=null, userCostChart=null, toolChart=null, tlChart=null, savingsChart=null;
+let tokenChart=null, userCostChart=null, toolChart=null, savingsChart=null;
 let cachedGroups=[], cachedModels=[], cachedTools=[], chartUsers=[];
 // Overview payload of the current refresh; it carries the server-computed
 // "Saved · Hosted Models" KPI (the sum of the user table's saved_usd
@@ -517,14 +506,13 @@ async function refresh(force){
   // the list of things you can still pick.
   try {
     const chartSort=userPieMetric==='cost'?'cost_usd':userPieMetric==='requests'?'requests':'total_tokens';
-     const [ov,gr,chartUs,mo,tools,tl,rc,rosterCat,modelCat]=await Promise.all([
+     const [ov,gr,chartUs,mo,tools,rc,rosterCat,modelCat]=await Promise.all([
        api('/api/v1/dashboard/overview?'+filters+'&ref='+encodeURIComponent(savingsRef),force),
        api('/api/v1/dashboard/groups?'+filters,force),
         api('/api/v1/dashboard/users?'+filters+'&sort='+chartSort+'&order=desc&limit=10&offset=0&savings=false',force),
       api('/api/v1/dashboard/models?'+filters,force),
       api('/api/v1/dashboard/tools?'+filters,force),
-      api('/api/v1/dashboard/timeline?'+filters+'&group_by='+tlGroupBy,force),
-       api('/api/v1/dashboard/recent?limit=20'+gf+uf+mf,force),
+      api('/api/v1/dashboard/recent?limit=20'+gf+uf+mf,force),
         api('/api/v1/dashboard/users?'+rangeOnly+'&limit=200&savings=false',force),
        api('/api/v1/dashboard/models?'+rangeOnly,force),
       ]);
@@ -545,7 +533,6 @@ async function refresh(force){
    renderToolChart();
    renderUserCostChart();
   renderSavings();
-  renderTimeline(tl);
     document.getElementById('last-refresh').textContent=' • '+new Date().toLocaleTimeString();
   } finally {
     if(force&&refreshBtn){refreshBtn.disabled=false;refreshBtn.textContent='Refresh';}
@@ -991,38 +978,6 @@ function renderToolChart(){
   renderPieLegend('tool-legend',labels,colors);
 }
 
-function renderTimeline(data){
-  const seriesSet=[...new Set(data.map(d=>d.series))];
-  const bucketsSet=[...new Set(data.map(d=>d.bucket))].sort();
-  const map={};
-  data.forEach(d=>{map[d.bucket+'|'+d.series]=d.total_tokens});
-
-  const datasets=seriesSet.map((s,i)=>({
-    label:s,
-    data:bucketsSet.map(b=>map[b+'|'+s]||0),
-    backgroundColor:COLORS[i%COLORS.length]+'40',
-    borderColor:COLORS[i%COLORS.length],
-    borderWidth:1.5,
-    fill:true,
-    tension:0.3,
-    pointRadius:0
-  }));
-
-  if(tlChart)tlChart.destroy();
-  tlChart=new Chart(document.getElementById('timeline-chart'),{
-    type:'line',
-    data:{labels:bucketsSet.map(b=>new Date(b).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})),datasets},
-    options:{
-      responsive:true,
-      scales:{
-        x:{ticks:{color:'#8b949e',maxRotation:45,font:{size:11}},grid:{color:'#2c3138'}},
-        y:{stacked:true,ticks:{color:'#8b949e',callback:v=>fmtN(v)},grid:{color:'#2c3138'}}
-      },
-      plugins:{legend:{labels:{color:'#8b949e',font:{size:11}}}}
-    }
-  });
-}
-
 function setGroupFilter(g){groupFilter=g;userFilter=[];updateUserFilterLabel();renderUserChecklist();refresh()}
 function clearGroupFilter(){groupFilter='';userFilter=[];updateUserFilterLabel();renderUserChecklist();refresh()}
 function setUserFilter(u){var i=userFilter.indexOf(u);if(i>=0)userFilter.splice(i,1);else userFilter.push(u);updateUserFilterLabel();renderUserChecklist();refresh()}
@@ -1051,14 +1006,6 @@ document.getElementById('user-metric-toggle').addEventListener('click',e=>{
   e.target.classList.add('active');
   userPieMetric=e.target.dataset.um;
    refreshUserChartOnly().catch(function(){renderUserCostChart();});
-});
-
-document.getElementById('tl-toggle').addEventListener('click',e=>{
-  if(e.target.tagName!=='BUTTON')return;
-  document.querySelector('#tl-toggle .active').classList.remove('active');
-  e.target.classList.add('active');
-  tlGroupBy=e.target.dataset.gb;
-  refresh();
 });
 
 syncDateInputs();
