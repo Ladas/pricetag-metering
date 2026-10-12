@@ -263,6 +263,16 @@ func TestParityGatesOnCountsAndReportsCostNotes(t *testing.T) {
 	}
 }
 
+func TestParityExcludesInFlightHour(t *testing.T) {
+	src := readSource(t, "rollups.go")
+	if !strings.Contains(src, "until = until.Truncate(time.Hour)") {
+		t.Fatal("parity must end at the current-hour boundary")
+	}
+	if strings.Contains(src, "until = until.Truncate(time.Hour).Add(time.Hour)") {
+		t.Fatal("parity must not include the in-flight hour")
+	}
+}
+
 // The part-A hotfix tripwire: Postgres rejects a string constant in
 // GROUP BY ("non-integer constant in GROUP BY"), and that exact query
 // shipped in part A unexecuted because the parity endpoint was never hit

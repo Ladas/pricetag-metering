@@ -635,8 +635,12 @@ func (s *Store) ParityReport(ctx context.Context, since, until time.Time) ([]Par
 	// hour-aligned, so raw must be truncated to the same boundaries or a
 	// non-aligned window would drop the edge buckets on one side and the
 	// gate would diff red from measurement, not drift.
+	// The maintenance caller passes the current hour as until and intentionally
+	// excludes that in-flight bucket. Do not add an hour here: doing so includes
+	// live traffic that has not yet been rebuilt into usage_hourly and flips the
+	// parity gate red whenever LIVE_ROLLUPS_ENABLED=false.
 	since = since.Truncate(time.Hour)
-	until = until.Truncate(time.Hour).Add(time.Hour)
+	until = until.Truncate(time.Hour)
 
 	tx, err := s.reader().BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
