@@ -554,6 +554,9 @@ function friendlyClient(ua){
    if(normalized.startsWith('codex-tui')||normalized.startsWith('codex/')) return 'Codex';
    if(normalized==='opencode'||normalized.startsWith('opencode/')||normalized.startsWith('opencode-')||normalized.startsWith('opencode.')) return 'OpenCode';
    if(normalized==='pi'||normalized.startsWith('pi/')||normalized.startsWith('pi-')||normalized.startsWith('pi.')||normalized.startsWith('pi ')) return 'Pi';
+   if(normalized.startsWith('charm-crush/')) return 'Charm-Crush';
+   if(normalized.startsWith('openai/')) return 'OpenAI';
+   if(normalized.startsWith('omp/')) return 'omp';
    if(normalized.startsWith('curl/')) return 'curl';
    return 'Other';
 }

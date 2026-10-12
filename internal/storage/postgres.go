@@ -1181,6 +1181,12 @@ func dashboardTool(userAgent string) string {
 		return "OpenCode"
 	case ua == "pi" || strings.HasPrefix(ua, "pi/") || strings.HasPrefix(ua, "pi-") || strings.HasPrefix(ua, "pi.") || strings.HasPrefix(ua, "pi "):
 		return "Pi"
+	case strings.HasPrefix(ua, "charm-crush/"):
+		return "Charm-Crush"
+	case strings.HasPrefix(ua, "openai/"):
+		return "OpenAI"
+	case strings.HasPrefix(ua, "omp/"):
+		return "omp"
 	case strings.HasPrefix(ua, "curl/"):
 		return "curl"
 	default:
