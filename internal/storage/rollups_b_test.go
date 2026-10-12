@@ -95,6 +95,19 @@ func TestToolRollupRechecksReadinessInsideExclusiveLock(t *testing.T) {
 	}
 }
 
+func TestToolRollupNormalizationVersionForcesRebuild(t *testing.T) {
+	body := funcBody(t, "rollups.go", "func (s *Store) ensureToolRollups")
+	if !strings.Contains(body, "metaToolRollupVersion") || !strings.Contains(body, "toolRollupVersion") {
+		t.Error("tool normalization changes must have a versioned rebuild marker")
+	}
+	if !strings.Contains(body, "s.metaSet(ctx, metaToolRollupsReady, \"false\")") {
+		t.Error("normalization changes must disable rollup reads before rebuilding")
+	}
+	if strings.Count(body, "metaToolRollupVersion") < 2 {
+		t.Error("normalization version must be checked and committed")
+	}
+}
+
 func TestToolRollupCoordinatesWithSchemaMigration(t *testing.T) {
 	body := funcBody(t, "rollups.go", "func (s *Store) ensureToolRollups")
 	migrationLock := strings.Index(body, "pg_advisory_xact_lock($1)")

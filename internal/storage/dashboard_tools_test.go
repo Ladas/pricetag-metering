@@ -17,6 +17,7 @@ func TestDashboardTool(t *testing.T) {
 		{"opencode.custom", "OpenCode"},
 		{"pi-coding-agent/0.1", "Pi"},
 		{"pi.something/1.0", "Pi"},
+		{"pi (darwin 25.6.0; arm64)", "Pi"},
 		{"curl/8.0", "curl"},
 		{"python-requests/2.0", "Other"},
 		{"", "Other"},
