@@ -27,17 +27,18 @@ type refreshResponse struct {
 }
 
 type pricingCatalogEntry struct {
-	Model              string  `json:"model"`
-	Provider           string  `json:"provider"`
-	Hosted             bool    `json:"hosted"`
-	InputCost          float64 `json:"input_cost_per_mtok"`
-	OutputCost         float64 `json:"output_cost_per_mtok"`
-	CacheReadCost      float64 `json:"cache_read_cost_per_mtok"`
-	CacheWriteCost     float64 `json:"cache_write_cost_per_mtok"`
-	ListInputCost      float64 `json:"list_input_cost_per_mtok,omitempty"`
-	ListOutputCost     float64 `json:"list_output_cost_per_mtok,omitempty"`
-	ListCacheReadCost  float64 `json:"list_cache_read_cost_per_mtok,omitempty"`
-	ListCacheWriteCost float64 `json:"list_cache_write_cost_per_mtok,omitempty"`
+	Model              string   `json:"model"`
+	Provider           string   `json:"provider"`
+	Hosted             bool     `json:"hosted"`
+	InputCost          float64  `json:"input_cost_per_mtok"`
+	OutputCost         float64  `json:"output_cost_per_mtok"`
+	CacheReadCost      float64  `json:"cache_read_cost_per_mtok"`
+	CacheWriteCost     float64  `json:"cache_write_cost_per_mtok"`
+	ListInputCost      float64  `json:"list_input_cost_per_mtok,omitempty"`
+	ListOutputCost     float64  `json:"list_output_cost_per_mtok,omitempty"`
+	ListCacheReadCost  float64  `json:"list_cache_read_cost_per_mtok,omitempty"`
+	ListCacheWriteCost float64  `json:"list_cache_write_cost_per_mtok,omitempty"`
+	DiscountPercent    *float64 `json:"discount_percent,omitempty"`
 }
 
 // HandleList serves the rate card behind the dashboard pricing modal. Any
@@ -55,7 +56,15 @@ func (h *PricingRefreshHandler) HandleList(w http.ResponseWriter, r *http.Reques
 	}
 
 	models := make([]pricingCatalogEntry, 0, len(prices))
+	policy, policyErr := h.store.GetPricingDiscountPolicy(r.Context())
 	for _, p := range prices {
+		modelPrice := pricing.ModelPrice{Model: p.Model, Provider: p.Provider}
+		var discount *float64
+		if policyErr == nil {
+			if percent, ok := pricing.DiscountPercent(modelPrice, policy); ok {
+				discount = &percent
+			}
+		}
 		models = append(models, pricingCatalogEntry{
 			Model: p.Model, Provider: p.Provider,
 			Hosted:         p.Provider == "vllm" || p.Provider == "qwen",
@@ -65,6 +74,7 @@ func (h *PricingRefreshHandler) HandleList(w http.ResponseWriter, r *http.Reques
 			CacheWriteCost: p.CacheWriteCost,
 			ListInputCost:  p.ListInputCost, ListOutputCost: p.ListOutputCost,
 			ListCacheReadCost: p.ListCacheReadCost, ListCacheWriteCost: p.ListCacheWriteCost,
+			DiscountPercent: discount,
 		})
 	}
 	json.NewEncoder(w).Encode(map[string]any{"models": models})
