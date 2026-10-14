@@ -108,6 +108,17 @@ func (h *PricingRefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Req
 		})
 		return
 	}
+	policy, policyErr := h.store.GetPricingDiscountPolicy(ctx)
+	if policyErr != nil {
+		json.NewEncoder(w).Encode(refreshResponse{Source: source, Error: "discount policy unavailable"})
+		return
+	}
+	prices, discountChanged, discountErr := pricing.ApplyDiscounts(prices, policy)
+	if discountErr != nil {
+		json.NewEncoder(w).Encode(refreshResponse{Source: source, Error: discountErr.Error()})
+		return
+	}
+	changed = append(changed, discountChanged...)
 
 	// Upsert into DB
 	storePrices := make([]storage.ModelPrice, len(prices))

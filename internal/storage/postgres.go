@@ -1430,6 +1430,13 @@ var migrations = []string{
 		list_cache_write_cost_per_mtok NUMERIC(10,4) NOT NULL DEFAULT 0,
 		list_cache_read_cost_per_mtok NUMERIC(10,4) NOT NULL DEFAULT 0
 	)`,
+	`CREATE TABLE IF NOT EXISTS pricing_discount_policy (
+		id BOOLEAN PRIMARY KEY DEFAULT true CHECK (id),
+		version TEXT NOT NULL,
+		rules JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(rules) = 'array'),
+		updated_by TEXT NOT NULL DEFAULT '',
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`,
 	// Idempotent for pre-existing databases (CREATE TABLE IF NOT EXISTS does
 	// not add columns to a table that already exists).
 	`ALTER TABLE model_pricing ADD COLUMN IF NOT EXISTS list_input_cost_per_mtok NUMERIC(10,4) NOT NULL DEFAULT 0`,

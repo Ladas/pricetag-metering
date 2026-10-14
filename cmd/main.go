@@ -84,11 +84,6 @@ func main() {
 		}
 	}
 
-	// Phase 3 groundwork: freeze cost at insert (live path), and bring the
-	// historical ledger + hourly rollups up to date in the background —
-	// resumable and idempotent, steady-state it checks one meta row.
-	go store.EnsureRollupsBackfilled(context.Background())
-
 	// Phase 3 part B: maintenance loop (refresh recent hours, standing
 	// parity check) runs REGARDLESS of the read switch — keeping the
 	// table reconciled and the parity signal warm is what makes
@@ -102,6 +97,17 @@ func main() {
 	ctx := context.Background()
 	litellmPrices, pricingSource := pricing.LoadPrices(ctx)
 	if len(litellmPrices) > 0 {
+		policy, policyErr := store.GetPricingDiscountPolicy(ctx)
+		if policyErr != nil {
+			slog.Error("pricing discount policy unavailable", "error", policyErr)
+			os.Exit(1)
+		}
+		litellmPrices, changed, discountErr := pricing.ApplyDiscounts(litellmPrices, policy)
+		if discountErr != nil {
+			slog.Error("pricing discount policy invalid", "error", discountErr)
+			os.Exit(1)
+		}
+		slog.Info("pricing discount policy applied", "version", policy.Version, "models_changed", len(changed))
 		storePrices := make([]storage.ModelPrice, len(litellmPrices))
 		for i, p := range litellmPrices {
 			storePrices[i] = storage.ModelPrice{
@@ -168,6 +174,13 @@ func main() {
 		}
 	}
 
+	// Pricing must be fully seeded, including the durable commercial discount
+	// policy, before cost backfill can freeze previously-null usage_events.cost_usd.
+	// Starting this earlier creates a startup race where historical rows can be
+	// frozen at pre-discount rates (or the opposite), making the accounting
+	// result depend on timing.
+	go store.EnsureRollupsBackfilled(context.Background())
+
 	eventsHandler := handler.NewEventsHandler(store)
 	entitlementsHandler := handler.NewEntitlementsHandler(store, cfg)
 	dashboardHandler := handler.NewDashboardHandler(store, cfg)
@@ -216,6 +229,7 @@ func main() {
 	modelCatalogHandler := handler.NewModelCatalogHandler(k8sClient)
 	userModelPolicyHandler := handler.NewUserModelPolicyHandler(store)
 	quotaAdminHandler := handler.NewQuotaAdminHandler(store)
+	pricingDiscountHandler := handler.NewPricingDiscountHandler(store)
 	modelPolicyAdminHandler := handler.NewModelPolicyAdminHandler(store)
 	auth := authHandler.RequireAuth
 
@@ -337,6 +351,7 @@ func main() {
 	mux.HandleFunc("/api/v1/admin/models/provider/", auth(handler.RequirePartnerSuperAdmin(cfg, store, adminHandler.HandleUpdateProvider)))
 	mux.HandleFunc("/api/v1/admin/pricing/refresh", auth(handler.RequirePartnerSuperAdmin(cfg, store, handler.NewPricingRefreshHandler(store).HandleRefresh)))
 	mux.HandleFunc("/api/v1/admin/safety-net", auth(handler.RequirePartnerSuperAdmin(cfg, store, quotaAdminHandler.HandlePolicy)))
+	mux.HandleFunc("/api/v1/admin/pricing-discounts", auth(handler.RequirePartnerSuperAdmin(cfg, store, pricingDiscountHandler.Handle)))
 	mux.HandleFunc("/api/v1/admin/model-policies", auth(handler.RequirePartnerSuperAdmin(cfg, store, modelPolicyAdminHandler.HandleList)))
 	// OpenShift users/entitlements management (redesigned admin page).
 
