@@ -32,6 +32,17 @@ func TestDefaultDiscountsApplyOnlyToApprovedFamilies(t *testing.T) {
 
 func closeDiscount(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 
+func TestApplyDiscountsMatchesVertexProviderAliases(t *testing.T) {
+	prices := []ModelPrice{{Model: "gemini-3.7-flash", Provider: "vertex_ai-language-models", InputCost: 1, OutputCost: 2, CacheReadCost: 0.2, CacheWriteCost: 1}}
+	got, changed, err := ApplyDiscounts(prices, DefaultDiscountPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changed) != 1 || !closeDiscount(got[0].InputCost, .78) || !closeDiscount(got[0].OutputCost, 1.56) || !closeDiscount(got[0].CacheReadCost, .156) || !closeDiscount(got[0].CacheWriteCost, .78) {
+		t.Fatalf("vertex alias was not discounted across all rates: got=%+v changed=%v", got[0], changed)
+	}
+}
+
 func TestDiscountPolicyRejectsOverlappingRules(t *testing.T) {
 	err := ValidateDiscountPolicy(DiscountPolicy{
 		Version: "test",

@@ -528,7 +528,9 @@ td .tag{white-space:nowrap}
 .pm-body td{padding:6px 8px;border-bottom:1px solid var(--bdr,#232b3b)}
 .pm-zero{color:var(--t2,#8090a8)}
 .pm-host{color:var(--grn,#3dcc6e);font-size:10.5px;margin-left:6px;border:1px solid var(--bdr,#232b3b);border-radius:99px;padding:0 6px}
-.pm-free{color:#58a6ff;font-size:10.5px;margin-left:6px;border:1px solid var(--bdr,#232b3b);border-radius:99px;padding:0 6px}
+.pm-free{display:inline-block;color:var(--grn,#3dcc6e);background:rgba(61,204,110,.14);border:1px solid rgba(61,204,110,.5);border-radius:99px;padding:3px 10px;font-size:12px;font-weight:800;white-space:nowrap}
+.pm-discount{display:inline-block;color:#58a6ff;background:rgba(88,166,255,.12);border:1px solid rgba(88,166,255,.5);border-radius:99px;padding:3px 10px;font-size:12px;font-weight:800;white-space:nowrap}
+.pm-none{color:var(--t2,#8090a8);font-size:10px;white-space:nowrap}
 .pm-list{color:var(--t2,#8090a8);font-size:11px}
 </style>
 </head>
@@ -2479,6 +2481,8 @@ fetch("/whoami").then(function(r){return r.json()}).then(function(d){
 // ── Model pricing modal (shared rate card across all pages) ─────────
 function pmEsc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 function pmPrice(v){v=+v||0;return v>0?'$'+v.toLocaleString(undefined,{maximumFractionDigits:3}):'<span class="pm-zero">–</span>';}
+function pmDiscount(m){if(m.discount_percent!=null)return +m.discount_percent||0;var p=[['input_cost_per_mtok','list_input_cost_per_mtok'],['output_cost_per_mtok','list_output_cost_per_mtok'],['cache_read_cost_per_mtok','list_cache_read_cost_per_mtok'],['cache_write_cost_per_mtok','list_cache_write_cost_per_mtok']],d=[];p.forEach(function(x){var e=+m[x[0]]||0,l=+m[x[1]]||0;if(l>0)d.push(100*(1-e/l));});if(!d.length)return null;return Math.max(0,Math.min.apply(null,d));}
+function pmRate(e,l,free,d){var baseline=+l||0;if(!(baseline>0)&&(+d||0)>0&&(+(e)||0)>0)baseline=(+e)/(1-(+d/100));var out=(+e||0)>0?pmPrice(e):(free?'$0':'<span class="pm-zero">–</span>');if(baseline>0&&Math.abs((+e||0)-baseline)>.000001)out+='<div class="pm-list">reference '+pmPrice(baseline)+'</div>';return out;}
 function openPricing(){document.getElementById('pricing-ov').classList.add('show');loadPricing();}
 function closePricing(){document.getElementById('pricing-ov').classList.remove('show');}
 function loadPricing(){
@@ -2488,14 +2492,13 @@ function loadPricing(){
   fetch('/api/v1/pricing'+(all?'?used=0':'')).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(function(j){
     var ms=j.models||[];
     if(!ms.length){body.innerHTML='<div class="pm-sub" style="padding:14px 0">No rates seeded yet.</div>';return;}
-    body.innerHTML='<table><thead><tr><th>Model</th><th>Input</th><th>Output</th><th>Cache read</th><th>Cache write</th></tr></thead><tbody>'+
-      ms.sort(function(a,b){var r=function(m){return ((+m.input_cost_per_mtok||0)+(+m.output_cost_per_mtok||0)<=0)?0:(m.hosted?1:2);};return r(a)-r(b);}).map(function(m){
+     body.innerHTML='<table><thead><tr><th>Model</th><th>Discount</th><th>Input</th><th>Output</th><th>Cache read</th><th>Cache write</th></tr></thead><tbody>'+
+       ms.sort(function(a,b){var free=function(m){return ((+m.input_cost_per_mtok||0)+(+m.output_cost_per_mtok||0)<=0);},da=pmDiscount(a),db=pmDiscount(b),ra=free(a)?0:(da!==null&&da>0.05?1:2),rb=free(b)?0:(db!==null&&db>0.05?1:2);return ra-rb||(ra===1?(db-da):0)||String(a.model).localeCompare(String(b.model));}).map(function(m){
         var free=(+m.input_cost_per_mtok||0)+(+m.output_cost_per_mtok||0)<=0;
-        var cell=function(v){return (+v||0)>0?pmPrice(v):(free?'$0':'<span class="pm-zero">–</span>');};
-        var list=(m.list_input_cost_per_mtok||m.list_output_cost_per_mtok)?'<div class="pm-list">vendor list '+pmPrice(m.list_input_cost_per_mtok)+' / '+pmPrice(m.list_output_cost_per_mtok)+'</div>':'';
-        return '<tr><td>'+pmEsc(m.model)+(m.hosted?'<span class="pm-host">hosted</span>':'')+(free?'<span class="pm-free">free</span>':'')+'<div class="pm-list">'+pmEsc(m.provider)+list+'</div></td>'
-          +'<td>'+cell(m.input_cost_per_mtok)+'</td><td>'+cell(m.output_cost_per_mtok)+'</td>'
-          +'<td>'+cell(m.cache_read_cost_per_mtok)+'</td><td>'+cell(m.cache_write_cost_per_mtok)+'</td></tr>';
+         var d=pmDiscount(m), badge=free?'<span class="pm-free">FREE</span>':(d!==null&&d>0.05?'<span class="pm-discount">'+d.toFixed(d%1?1:0)+'% off</span>':'<span class="pm-none">no discount</span>');
+         return '<tr><td>'+pmEsc(m.model)+(m.hosted?'<span class="pm-host">hosted</span>':'')+'<div class="pm-list">'+pmEsc(m.provider)+'</div></td><td>'+badge+'</td>'
+           +'<td>'+pmRate(m.input_cost_per_mtok,m.list_input_cost_per_mtok,free,m.discount_percent)+'</td><td>'+pmRate(m.output_cost_per_mtok,m.list_output_cost_per_mtok,free,m.discount_percent)+'</td>'
+           +'<td>'+pmRate(m.cache_read_cost_per_mtok,m.list_cache_read_cost_per_mtok,free,m.discount_percent)+'</td><td>'+pmRate(m.cache_write_cost_per_mtok,m.list_cache_write_cost_per_mtok,free,m.discount_percent)+'</td></tr>';
       }).join('')+'</tbody></table>';
   }).catch(function(e){body.innerHTML='<div class="pm-sub" style="padding:14px 0;color:var(--red,#e8554e)">Could not load pricing ('+pmEsc(e.message)+').</div>';});
 }

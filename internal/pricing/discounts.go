@@ -100,9 +100,38 @@ func ApplyDiscounts(prices []ModelPrice, policy DiscountPolicy) ([]ModelPrice, [
 	return result, changed, nil
 }
 
+// DiscountPercent reports the policy discount for a model without changing
+// any rates. It is used by presentation layers when a vendor-list baseline is
+// intentionally unavailable (for example, Vertex reseller pricing).
+func DiscountPercent(price ModelPrice, policy DiscountPolicy) (float64, bool) {
+	for _, rule := range policy.Rules {
+		if matchesDiscount(price, rule) {
+			return (1 - rule.Multiplier) * 100, true
+		}
+	}
+	return 0, false
+}
+
 func matchesDiscount(price ModelPrice, rule DiscountRule) bool {
-	provider := strings.ToLower(strings.TrimSpace(rule.Provider))
+	provider := normalizeDiscountProvider(rule.Provider)
 	model := strings.ToLower(price.Model)
-	return (provider == "" || strings.EqualFold(price.Provider, provider)) &&
+	return (provider == "" || normalizeDiscountProvider(price.Provider) == provider) &&
 		(rule.ModelPrefix == "" || strings.HasPrefix(model, strings.ToLower(rule.ModelPrefix)))
+}
+
+// normalizeDiscountProvider keeps policy matching stable across provider names
+// emitted by LiteLLM, the gateway, and older seeded rows. Vertex rows have
+// appeared as vertex, vertex_ai, and vertex_ai-language-models.
+func normalizeDiscountProvider(provider string) string {
+	p := strings.ToLower(strings.TrimSpace(provider))
+	switch {
+	case p == "", p == "*":
+		return ""
+	case p == "openai" || strings.HasPrefix(p, "openai_") || strings.HasPrefix(p, "openai-") || strings.HasPrefix(p, "openai/"):
+		return "openai"
+	case p == "google" || p == "gemini" || strings.HasPrefix(p, "vertex") || strings.HasPrefix(p, "google-") || strings.HasPrefix(p, "google_"):
+		return "vertex"
+	default:
+		return p
+	}
 }
