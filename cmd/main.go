@@ -230,6 +230,7 @@ func main() {
 	userModelPolicyHandler := handler.NewUserModelPolicyHandler(store)
 	quotaAdminHandler := handler.NewQuotaAdminHandler(store)
 	pricingDiscountHandler := handler.NewPricingDiscountHandler(store)
+	historicalRepricingHandler := handler.NewHistoricalRepricingHandler(store)
 	modelPolicyAdminHandler := handler.NewModelPolicyAdminHandler(store)
 	auth := authHandler.RequireAuth
 
@@ -352,6 +353,8 @@ func main() {
 	mux.HandleFunc("/api/v1/admin/pricing/refresh", auth(handler.RequirePartnerSuperAdmin(cfg, store, handler.NewPricingRefreshHandler(store).HandleRefresh)))
 	mux.HandleFunc("/api/v1/admin/safety-net", auth(handler.RequirePartnerSuperAdmin(cfg, store, quotaAdminHandler.HandlePolicy)))
 	mux.HandleFunc("/api/v1/admin/pricing-discounts", auth(handler.RequirePartnerSuperAdmin(cfg, store, pricingDiscountHandler.Handle)))
+	mux.HandleFunc("/api/v1/admin/pricing/reprice", auth(handler.RequirePartnerSuperAdmin(cfg, store, historicalRepricingHandler.Handle)))
+	mux.HandleFunc("/api/v1/admin/pricing/reprice/", auth(handler.RequirePartnerSuperAdmin(cfg, store, historicalRepricingHandler.HandleStatus)))
 	mux.HandleFunc("/api/v1/admin/model-policies", auth(handler.RequirePartnerSuperAdmin(cfg, store, modelPolicyAdminHandler.HandleList)))
 	// OpenShift users/entitlements management (redesigned admin page).
 
