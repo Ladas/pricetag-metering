@@ -68,9 +68,11 @@ MODEL_ID='exact-model-id'</pre></div></div><div class="card"><h3>Use the modelâ€
 }</pre></div>
     <div class="code"><button class="copy">copy</button><pre># Or use a shell session
 export ANTHROPIC_BASE_URL="{{GATEWAY_URL}}"
-export ANTHROPIC_API_KEY="$ENMAAS_KEY"
-export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1
-claude</pre></div>
+    export ANTHROPIC_API_KEY="$ENMAAS_KEY"
+    export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1
+    claude</pre></div>
+    <div class="warning"><span class="icon">!</span><div><strong>Disable Claude Codeâ€™s direct Vertex mode.</strong><br>Before starting Claude Code through EnMaaS, remove <code>CLAUDE_CODE_USE_VERTEX</code>, <code>ANTHROPIC_VERTEX_PROJECT_ID</code>, <code>ANTHROPIC_VERTEX_REGION</code>, and <code>CLOUD_ML_REGION</code> from your environment or <code>~/.claude/settings.json</code>. If <code>CLAUDE_CODE_USE_VERTEX=1</code> remains set, Claude Code bypasses the EnMaaS gateway and uses Vertex directly.</div></div>
+    <div class="code"><button class="copy">copy</button><pre>unset CLAUDE_CODE_USE_VERTEX ANTHROPIC_VERTEX_PROJECT_ID ANTHROPIC_VERTEX_REGION CLOUD_ML_REGION</pre></div>
     <h4 class="setup-heading">Optional: use client-side auto-mode</h4>
     <p class="setup-copy">If server-side auto-mode is unavailable or you prefer Claude Code to make the auto-mode decision locally, add this to the same <code>env</code> block in <code>~/.claude/settings.json</code>.</p>
     <div class="code"><button class="copy">copy</button><pre>"CLAUDE_CODE_AUTO_MODE_SERVER": "0"</pre></div>
@@ -158,6 +160,11 @@ codex --profile enmaas</pre></div>
       "settings": { "baseURL": "{{GATEWAY_URL}}/v1" }
     }
   }
+}</pre></div>
+        <p class="tool-info"><strong>Claude Haiku 5.5 and Claude 5.x models:</strong> use OpenCode <strong>v2.0.25 or newer</strong> and set <code>compatibility.supportsThinkingBlockBinding</code> to <code>false</code> on the model entry. Older OpenCode versions send a beta field that the EnMaaS Vertex backend rejects with <code>thinking.adaptive.block_binding: Extra inputs are not permitted</code>. Claude Code is not affected.</p>
+        <div class="code"><button class="copy">copy</button><pre>"claude-haiku-5-5": {
+  "name": "Claude Haiku 5.5 (EnMaaS)",
+  "compatibility": { "supportsThinkingBlockBinding": false }
 }</pre></div>
         <h4 class="setup-heading">2. Run v2 against EnMaaS</h4>
         <p class="setup-copy">Isolate this test configuration and start v2 with <code>--standalone</code>, which runs a private server that suits an isolated setup. Then use <code>/models</code> inside OpenCode to inspect the gateway catalog.</p>
