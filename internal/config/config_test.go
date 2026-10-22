@@ -10,6 +10,65 @@ import (
 // super-admin surfaces. The deployment sets one comma-separated and one
 // space-separated, so both forms (and a mix) must parse into individual
 // identities — a whole list collapsed into one entry silently denies access.
+func unsetEnv(t *testing.T, key string) {
+	t.Helper()
+	value, set := os.LookupEnv(key)
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatalf("unset %s: %v", key, err)
+	}
+	t.Cleanup(func() {
+		if set {
+			_ = os.Setenv(key, value)
+		} else {
+			_ = os.Unsetenv(key)
+		}
+	})
+}
+
+func TestKubernetesOverlayConfiguration(t *testing.T) {
+	for _, key := range []string{"MODEL_CRD_GROUP", "PROVIDER_CRD_GROUP", "PIPELINE_CONFIGMAP", "ROUTING_OVERLAY_CONFIGMAPS"} {
+		unsetEnv(t, key)
+	}
+	cfg := Load()
+	if cfg.Kubernetes.Enabled() {
+		t.Fatal("Kubernetes adapter must remain disabled when no source is configured")
+	}
+	if len(cfg.Kubernetes.RoutingOverlayConfigMaps) != 0 {
+		t.Fatalf("overlay defaults must not enable the adapter implicitly: %v", cfg.Kubernetes.RoutingOverlayConfigMaps)
+	}
+
+	t.Setenv("MODEL_CRD_GROUP", "example.com")
+	cfg = Load()
+	wantDefault := []string{"praxis-routing-openai", "praxis-routing-unified"}
+	if !reflect.DeepEqual(cfg.Kubernetes.RoutingOverlayConfigMaps, wantDefault) {
+		t.Fatalf("overlay default = %v, want %v", cfg.Kubernetes.RoutingOverlayConfigMaps, wantDefault)
+	}
+	if !cfg.Kubernetes.Enabled() {
+		t.Fatal("Kubernetes adapter must be enabled when a CRD source is configured")
+	}
+
+	unsetEnv(t, "MODEL_CRD_GROUP")
+	t.Setenv("ROUTING_OVERLAY_CONFIGMAPS", "custom-a,custom-b")
+	cfg = Load()
+	wantCustom := []string{"custom-a", "custom-b"}
+	if !reflect.DeepEqual(cfg.Kubernetes.RoutingOverlayConfigMaps, wantCustom) {
+		t.Fatalf("explicit overlays = %v, want %v", cfg.Kubernetes.RoutingOverlayConfigMaps, wantCustom)
+	}
+	if !cfg.Kubernetes.Enabled() {
+		t.Fatal("overlay-only configuration must enable the Kubernetes adapter")
+	}
+
+	t.Setenv("MODEL_CRD_GROUP", "example.com")
+	t.Setenv("ROUTING_OVERLAY_CONFIGMAPS", "")
+	cfg = Load()
+	if !cfg.Kubernetes.Enabled() {
+		t.Fatal("Kubernetes adapter must remain enabled for the CRD source")
+	}
+	if len(cfg.Kubernetes.RoutingOverlayConfigMaps) != 0 {
+		t.Fatalf("explicitly empty overlay configuration must disable the overlay path: %v", cfg.Kubernetes.RoutingOverlayConfigMaps)
+	}
+}
+
 func TestEnvList_Separators(t *testing.T) {
 	cases := map[string][]string{
 		"a@x.com,b@x.com":            {"a@x.com", "b@x.com"},

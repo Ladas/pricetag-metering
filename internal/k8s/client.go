@@ -120,9 +120,33 @@ func (c *Client) ListProviders(ctx context.Context) ([]ProviderInfo, error) {
 }
 
 func (c *Client) ListModels(ctx context.Context) ([]ModelInfo, error) {
+	var result []ModelInfo
+	var sourceErr error
 	if c.cfg.ModelGroup == "" {
-		return c.listModelsFromConfig(ctx)
+		result, sourceErr = c.listModelsFromConfig(ctx)
+	} else {
+		result, sourceErr = c.listModelsFromCRDs(ctx)
 	}
+
+	seen := make(map[string]bool, len(result))
+	for _, model := range result {
+		seen[model.Name] = true
+	}
+	overlays := c.listModelsFromOverlays(ctx, seen)
+	result = append(result, overlays...)
+	if len(result) == 0 && sourceErr != nil {
+		return nil, sourceErr
+	}
+	if sourceErr != nil {
+		slog.Warn("model catalogue source unavailable; using routing overlays", "error", sourceErr)
+	}
+	return result, nil
+}
+
+// listModelsFromCRDs reads the model catalogue from the configured CRDs.
+// ListModels merges routing overlays after this source returns, so an
+// overlay-only deployment can still serve a catalogue.
+func (c *Client) listModelsFromCRDs(ctx context.Context) ([]ModelInfo, error) {
 	list, err := c.client.Resource(c.modelGVR()).Namespace(c.namespace).List(ctx, metav1.ListOptions{})
 
 	// A configured fallback group covers catalogues mid-migration between
@@ -349,7 +373,7 @@ type praxisTop struct {
 type catalogModel struct {
 	ID          string `yaml:"id"`
 	DisplayName string `yaml:"display_name"`
-	OwnedBy    string `yaml:"owned_by"`
+	OwnedBy     string `yaml:"owned_by"`
 }
 
 type routerRoute struct {
@@ -425,7 +449,67 @@ func (c *Client) listModelsFromConfig(ctx context.Context) ([]ModelInfo, error) 
 			}
 		}
 	}
+
 	return result, nil
+}
+
+// overlayCandidate mirrors a single candidate entry in a routing overlay
+// ConfigMap (praxis-routing-openai / praxis-routing-unified). See
+// listModelsFromOverlays.
+type overlayCandidate struct {
+	Kind     string   `json:"kind"`
+	Name     string   `json:"name"`
+	Site     string   `json:"site"`
+	Cluster  string   `json:"cluster"`
+	Provider string   `json:"provider"`
+	OwnedBy  string   `json:"owned_by"`
+	Catalog  []string `json:"catalog"`
+}
+
+type overlayDoc struct {
+	Candidates []overlayCandidate `json:"candidates"`
+}
+
+// listModelsFromOverlays reads the configured routing overlay ConfigMaps
+// and returns their candidates as ModelInfo entries. Each overlay CM has a
+// routing-overlay.json key holding the candidate list the gateway's
+// intelligent_route filter routes by. Missing or unparseable overlays are
+// skipped (logged) — they are an additional source, not a hard dependency.
+func (c *Client) listModelsFromOverlays(ctx context.Context, seen map[string]bool) []ModelInfo {
+	if len(c.cfg.RoutingOverlayConfigMaps) == 0 {
+		return nil
+	}
+	var result []ModelInfo
+	cmGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}
+	for _, name := range c.cfg.RoutingOverlayConfigMaps {
+		cm, err := c.client.Resource(cmGVR).Namespace(c.namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			slog.Debug("routing overlay ConfigMap not readable", "name", name, "error", err)
+			continue
+		}
+		raw, found, _ := unstructured.NestedString(cm.Object, "data", "routing-overlay.json")
+		if !found {
+			slog.Debug("routing overlay ConfigMap missing routing-overlay.json key", "name", name)
+			continue
+		}
+		var doc overlayDoc
+		if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+			slog.Warn("routing overlay JSON parse failed", "name", name, "error", err)
+			continue
+		}
+		for _, cand := range doc.Candidates {
+			if cand.Name == "" || seen[cand.Name] {
+				continue
+			}
+			seen[cand.Name] = true
+			info := ModelInfo{Name: cand.Name, Provider: cand.OwnedBy}
+			if cand.Cluster != "" {
+				info.ProviderRefs = []ProviderRef{{ProviderName: cand.Cluster, TargetModel: cand.Name, Weight: 1}}
+			}
+			result = append(result, info)
+		}
+	}
+	return result
 }
 
 func (c *Client) listProvidersFromConfig(ctx context.Context) ([]ProviderInfo, error) {
