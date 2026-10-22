@@ -127,6 +127,11 @@ func LocalPrices() []ModelPrice {
 		// skips zero-rate models, keeping its list baseline — and therefore
 		// its "saved" column — at 0 too.
 		{Model: "rits/zai-org/glm-5-3", Provider: "vllm"},
+		// DeepSeek V4.1 Flash on the curvebender cluster, same rationale as
+		// GLM: internally hosted via LiteLLM, billed at $0. A model_pricing
+		// row was manually inserted 2026-10-21 for the prod deploy; this
+		// makes the pricing reproducible across DB rebuilds and restarts.
+		{Model: "rits/deepseek-ai/DeepSeek-V4.1-Flash-1017", Provider: "vllm"},
 	}
 }
 
