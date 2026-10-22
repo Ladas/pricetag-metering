@@ -234,6 +234,14 @@ type Kubernetes struct {
 	PipelineConfigMapNamespace string
 	PipelineConfigMapKey       string
 
+	// RoutingOverlayConfigMaps names the ConfigMaps holding the gateway's
+	// intelligent_route routing overlays (comma-separated). Each overlay's
+	// routing-overlay.json key holds a candidate list that serves as the
+	// model catalogue when the gateway uses overlay-based routing (the
+	// PR-12 migration and later). Defaults to the standard EnMaaS overlay
+	// names; empty disables the overlay path. Optional.
+	RoutingOverlayConfigMaps []string
+
 	// SubscriptionName names the MaaSSubscription CR (in Namespace) whose
 	// spec.owner.groups is the canonical, live list of valid org groups.
 	SubscriptionName string
@@ -241,7 +249,7 @@ type Kubernetes struct {
 
 // Enabled reports whether the Kubernetes adapter should be initialised.
 func (k Kubernetes) Enabled() bool {
-	return k.ModelGroup != "" || k.ProviderGroup != "" || k.PipelineConfigMap != ""
+	return k.ModelGroup != "" || k.ProviderGroup != "" || k.PipelineConfigMap != "" || len(k.RoutingOverlayConfigMaps) > 0
 }
 
 // Load resolves configuration from the environment.
@@ -252,6 +260,14 @@ func Load() Config {
 	// hour-wide live-upsert lock. Operators can explicitly override either
 	// side of the matrix with LIVE_ROLLUPS_ENABLED.
 	liveRollupsEnabled := envBool("LIVE_ROLLUPS_ENABLED", dashboardUseRollups)
+
+	modelGroup := os.Getenv("MODEL_CRD_GROUP")
+	providerGroup := os.Getenv("PROVIDER_CRD_GROUP")
+	pipelineConfigMap := os.Getenv("PIPELINE_CONFIGMAP")
+	overlayConfigMaps := envList("ROUTING_OVERLAY_CONFIGMAPS")
+	if _, explicit := os.LookupEnv("ROUTING_OVERLAY_CONFIGMAPS"); !explicit && (modelGroup != "" || providerGroup != "" || pipelineConfigMap != "") {
+		overlayConfigMaps = []string{"praxis-routing-openai", "praxis-routing-unified"}
+	}
 
 	return Config{
 		DatabaseURL:       os.Getenv("DATABASE_URL"),
@@ -318,19 +334,20 @@ func Load() Config {
 		},
 		Kubernetes: Kubernetes{
 			Namespace:                  envDefault("K8S_NAMESPACE", "default"),
-			ModelGroup:                 os.Getenv("MODEL_CRD_GROUP"),
+			ModelGroup:                 modelGroup,
 			ModelVersion:               envDefault("MODEL_CRD_VERSION", "v1alpha1"),
 			ModelResource:              envDefault("MODEL_CRD_RESOURCE", "externalmodels"),
-			ProviderGroup:              os.Getenv("PROVIDER_CRD_GROUP"),
+			ProviderGroup:              providerGroup,
 			ProviderVersion:            envDefault("PROVIDER_CRD_VERSION", "v1alpha1"),
 			ProviderResource:           envDefault("PROVIDER_CRD_RESOURCE", "externalproviders"),
 			ModelFallbackGroup:         os.Getenv("MODEL_CRD_FALLBACK_GROUP"),
 			GroupGroup:                 os.Getenv("GROUP_CRD_GROUP"),
 			GroupVersion:               envDefault("GROUP_CRD_VERSION", "v1"),
 			GroupResource:              envDefault("GROUP_CRD_RESOURCE", "groups"),
-			PipelineConfigMap:          os.Getenv("PIPELINE_CONFIGMAP"),
+			PipelineConfigMap:          pipelineConfigMap,
 			PipelineConfigMapNamespace: os.Getenv("PIPELINE_CONFIGMAP_NAMESPACE"),
 			PipelineConfigMapKey:       envDefault("PIPELINE_CONFIGMAP_KEY", "config.yaml"),
+			RoutingOverlayConfigMaps:   overlayConfigMaps,
 			SubscriptionName:           envDefault("MAAS_SUBSCRIPTION_NAME", "dogfood-team"),
 		},
 	}
