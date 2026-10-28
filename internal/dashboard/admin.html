@@ -961,7 +961,12 @@ function savePricingDiscounts() {
   syncPricingDiscountDraft();
   var version = document.getElementById('pricing-discount-version').value.trim();
   updateJSON('/api/v1/admin/pricing-discounts', 'PUT', {version:version, rules:pricingDiscountDraft}).then(function() {
-    return fetch('/api/v1/admin/pricing/refresh', {method:'POST'});
+    return fetch('/api/v1/admin/pricing/refresh', {method:'POST'}).then(function(response) {
+      if (!response.ok) throw new Error('Policy saved, but rate refresh failed (HTTP ' + response.status + '). Retry refresh before relying on the new rates.');
+      return response.json().then(function(result) {
+        if (result.error) throw new Error('Policy saved, but rate refresh failed. Retry refresh before relying on the new rates.');
+      });
+    });
   }).then(function() {
     loadPricingDiscounts();
   }).catch(function(err) {
