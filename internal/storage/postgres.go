@@ -1482,6 +1482,7 @@ var migrations = []string{
 		list_cache_write_cost_per_mtok NUMERIC(10,4) NOT NULL DEFAULT 0,
 		list_cache_read_cost_per_mtok NUMERIC(10,4) NOT NULL DEFAULT 0
 	)`,
+	`ALTER TABLE model_pricing ADD COLUMN IF NOT EXISTS managed_rate BOOLEAN NOT NULL DEFAULT false`,
 	`CREATE TABLE IF NOT EXISTS pricing_discount_policy (
 		id BOOLEAN PRIMARY KEY DEFAULT true CHECK (id),
 		version TEXT NOT NULL,
@@ -1603,7 +1604,7 @@ func (s *Store) SeedPricing(ctx context.Context, prices []ModelPrice) (int, erro
 
 	updated := 0
 	for _, p := range prices {
-		_, err := tx.ExecContext(ctx, `
+		result, err := tx.ExecContext(ctx, `
 			INSERT INTO model_pricing (model, provider, input_cost_per_mtok, output_cost_per_mtok, cache_write_cost_per_mtok, cache_read_cost_per_mtok, deprecated)
 			VALUES ($1, $2, $3, $4, $5, $6, $7)
 			ON CONFLICT (model) DO UPDATE SET
@@ -1612,12 +1613,17 @@ func (s *Store) SeedPricing(ctx context.Context, prices []ModelPrice) (int, erro
 				output_cost_per_mtok = EXCLUDED.output_cost_per_mtok,
 				cache_write_cost_per_mtok = EXCLUDED.cache_write_cost_per_mtok,
 				cache_read_cost_per_mtok = EXCLUDED.cache_read_cost_per_mtok,
-				deprecated = EXCLUDED.deprecated`,
+				deprecated = EXCLUDED.deprecated
+ WHERE NOT model_pricing.managed_rate`,
 			p.Model, p.Provider, p.InputCost, p.OutputCost, p.CacheWriteCost, p.CacheReadCost, p.Deprecated)
 		if err != nil {
 			return 0, fmt.Errorf("upsert %s: %w", p.Model, err)
 		}
-		updated++
+		count, err := result.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+		updated += int(count)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -1671,6 +1677,7 @@ func (s *Store) SeedListPricing(ctx context.Context, prices []ModelPrice) (int, 
 // price seeded" — the cost query's NULLIF fallback treats 0 as absent and
 // falls back to the effective gateway rate, so saved_usd is exactly 0.
 type ModelPrice struct {
+	Managed            bool // Explicit service-managed rate; imports must not replace it.
 	Model              string
 	Provider           string
 	InputCost          float64
@@ -1731,7 +1738,7 @@ func (s *Store) GetPricingCatalog(ctx context.Context, usedOnly bool) ([]ModelPr
 }
 
 func (s *Store) GetCurrentPricing(ctx context.Context) ([]ModelPrice, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT model, provider, input_cost_per_mtok, output_cost_per_mtok, cache_write_cost_per_mtok, cache_read_cost_per_mtok FROM model_pricing ORDER BY model`)
+	rows, err := s.db.QueryContext(ctx, `SELECT model, provider, input_cost_per_mtok, output_cost_per_mtok, cache_write_cost_per_mtok, cache_read_cost_per_mtok, managed_rate FROM model_pricing ORDER BY model`)
 	if err != nil {
 		return nil, err
 	}
@@ -1740,7 +1747,7 @@ func (s *Store) GetCurrentPricing(ctx context.Context) ([]ModelPrice, error) {
 	var prices []ModelPrice
 	for rows.Next() {
 		var p ModelPrice
-		if err := rows.Scan(&p.Model, &p.Provider, &p.InputCost, &p.OutputCost, &p.CacheWriteCost, &p.CacheReadCost); err != nil {
+		if err := rows.Scan(&p.Model, &p.Provider, &p.InputCost, &p.OutputCost, &p.CacheWriteCost, &p.CacheReadCost, &p.Managed); err != nil {
 			return nil, err
 		}
 		prices = append(prices, p)

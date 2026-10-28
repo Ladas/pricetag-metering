@@ -266,6 +266,17 @@ func (h *AuthHandler) HandleImpersonate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if h.cfg.ManagementAPISecret != "" {
+		if h.orgStore == nil {
+			http.Error(w, "account directory unavailable", 503)
+			return
+		}
+		profile, err := h.orgStore.PartnerUserByMaaSUsername(r.Context(), target)
+		if err != nil || !profile.Active || profile.KeyRevocationPending {
+			http.Error(w, "active target account required", 403)
+			return
+		}
+	}
 	slog.Info("admin viewing as user", "admin", session.Username, "as", target)
 	h.setCookie(w, session.Username, session.Groups, target)
 	// /dashboard serves the personal user page while impersonating (the
@@ -363,6 +374,17 @@ func (h *AuthHandler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 		// HandleImpersonate writes it for super-admins only, and the cookie
 		// is HMAC-signed, so a signed-out admin cannot forge one.
 		if session.As != "" && IsPartnerSuperAdminUsername(r.Context(), h.cfg, h.orgStore, session.Username) {
+			if h.cfg.ManagementAPISecret != "" && r.URL.Path != "/admin/impersonate" {
+				profile, err := h.orgStore.PartnerUserByMaaSUsername(r.Context(), session.As)
+				if err != nil || !profile.Active || profile.KeyRevocationPending {
+					http.Error(w, "target account unavailable; return to your administrator view", 403)
+					return
+				}
+				if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+					http.Error(w, "impersonated views are read-only", 403)
+					return
+				}
+			}
 			r.Header.Set(realUserHeader, session.Username)
 			r.Header.Set(h.cfg.UserHeader, session.As)
 		}

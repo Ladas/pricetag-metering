@@ -1,7 +1,13 @@
 <div class="managed-controls">
 <section>
-<h2>Monthly user budgets</h2><form id="budget">
+<h2>Per-user monthly overrides</h2>
+<p>Override the global monthly allowance for one login. Removing an override restores the global default without resetting spending.</p>
+<form id="budget">
   <label>User <select class="tbl-input" name="subject" required></select></label>
-  <label>USD <input class="tbl-input" type="number" name="monthly_usd" min="0.01" max="10000" step="0.01" value="5" required></label><button class="btn btn-grn">Set override</button><button class="btn btn-outline" type="button" id="removeBudget">Use global default</button></form>
-<button class="btn btn-outline" id="listBudgets">List overrides</button><pre id="budgets"></pre></section>
+  <label>Monthly USD <input class="tbl-input" type="number" name="monthly_usd" min="0.01" max="10000" step="0.01" required></label><button class="btn btn-grn">Set override</button><button class="btn btn-outline" type="button" id="removeBudget">Use global default</button></form>
+<p id="budgetCurrent" role="status"></p>
+<details id="budgetDetails"><summary>Existing user overrides</summary>
+<form id="budgetSearch"><label>Search login <input class="tbl-input" name="search" maxlength="128"></label><button class="btn btn-outline">Search</button></form>
+<button type="button" class="btn btn-outline" id="listBudgets">Refresh overrides</button>
+<div id="budgets"></div><div id="budgetPages"></div></details></section>
 </div>

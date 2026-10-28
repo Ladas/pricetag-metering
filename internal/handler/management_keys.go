@@ -64,3 +64,59 @@ func NewManagementKeysHandler(store *storage.Store, cfg config.Config, maas *maa
 		writeJSON(w, key)
 	}
 }
+
+// NewManagementKeyRevocationsHandler is administrator-only via RequireManagement.
+// Every login attached to the selected stable identity is covered. MaaS revokes
+// each login atomically; a partial upstream failure is explicit and safely retryable.
+func NewManagementKeyRevocationsHandler(store *storage.Store, cfg config.Config, maas *maasapi.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", 405)
+			return
+		}
+		var body struct {
+			Subject string `json:"subject"`
+			DryRun  bool   `json:"dry_run"`
+		}
+		if !decodeJSON(w, r, &body) {
+			return
+		}
+		if strings.TrimSpace(body.Subject) == "" || len(body.Subject) > 128 {
+			http.Error(w, "invalid subject", 400)
+			return
+		}
+		user, err := store.PartnerUserByMaaSUsername(r.Context(), body.Subject)
+		if err != nil {
+			http.Error(w, "user not found", 404)
+			return
+		}
+		logins, err := store.ListPartnerUsernames(r.Context(), user.UserID)
+		if err != nil || len(logins) == 0 {
+			http.Error(w, "user logins unavailable", 503)
+			return
+		}
+		if !body.DryRun {
+			if err := store.Audit(r.Context(), r.Header.Get(cfg.UserHeader), "partner_user.keys_revoke_requested", user.UserID, map[string]any{"logins": logins}); err != nil {
+				http.Error(w, "revocation audit unavailable", 503)
+				return
+			}
+		}
+		total := 0
+		for _, login := range logins {
+			count, err := maas.RevokeAllUserAPIKeys(r.Context(), login, cfg.PartnerUserKeyGroup, body.DryRun)
+			if err != nil {
+				http.Error(w, "key service failed; revocation may be partial, retry this user", 502)
+				return
+			}
+			total += count
+		}
+		if !body.DryRun {
+			if err := store.Audit(r.Context(), r.Header.Get(cfg.UserHeader), "partner_user.keys_revoked", user.UserID, map[string]any{"count": total}); err != nil {
+				http.Error(w, "keys revoked; audit completion unavailable", 503)
+				return
+			}
+		}
+		writeJSON(w, map[string]any{"count": total, "dry_run": body.DryRun})
+	}
+}

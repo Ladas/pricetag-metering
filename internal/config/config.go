@@ -24,6 +24,7 @@ type Config struct {
 	UserDashboardsEnabled  bool
 	ManagementAPISecret    string
 	ManagementPublicOrigin string
+	GatewayModelsFile      string
 
 	// DatabaseURL is the PostgreSQL connection string. Required.
 	DatabaseURL string
@@ -288,6 +289,7 @@ func Load() Config {
 		DBMaxIdleConns:           envInt("DB_MAX_IDLE_CONNS", 10),
 		DBConnMaxLifetimeSeconds: envInt("DB_CONN_MAX_LIFETIME_SECONDS", 14400),
 		EventSource:              envDefault("EVENT_SOURCE", "ai-gateway"),
+		GatewayModelsFile:        os.Getenv("GATEWAY_MODELS_FILE"),
 		ManagementAPISecret:      os.Getenv("MANAGEMENT_API_SECRET"),
 		ManagementPublicOrigin:   strings.TrimRight(os.Getenv("MANAGEMENT_PUBLIC_ORIGIN"), "/"),
 		UserDashboardsEnabled:    envBool("USER_DASHBOARDS_ENABLED", false),

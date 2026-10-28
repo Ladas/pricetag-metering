@@ -142,10 +142,10 @@ func (s *Store) SetManagedPrice(ctx context.Context, actor string, p ManagedPric
 	if _, err = tx.ExecContext(ctx, fmt.Sprintf(`UPDATE usage_events u SET cost_usd=q.cost FROM (SELECT e.id,%s AS cost FROM usage_events e LEFT JOIN model_pricing p ON p.model=e.model WHERE e.model=$1 AND e.cost_usd IS NULL) q WHERE u.id=q.id`, currentPriceUSDExpr), p.Model); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO model_pricing(model,provider,input_cost_per_mtok,output_cost_per_mtok,cache_write_cost_per_mtok,cache_read_cost_per_mtok) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(model) DO UPDATE SET provider=EXCLUDED.provider,input_cost_per_mtok=EXCLUDED.input_cost_per_mtok,output_cost_per_mtok=EXCLUDED.output_cost_per_mtok,cache_write_cost_per_mtok=EXCLUDED.cache_write_cost_per_mtok,cache_read_cost_per_mtok=EXCLUDED.cache_read_cost_per_mtok`, p.Model, p.Provider, rates[0], rates[1], rates[2], rates[3]); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO model_pricing(model,provider,input_cost_per_mtok,output_cost_per_mtok,cache_write_cost_per_mtok,cache_read_cost_per_mtok,managed_rate) VALUES($1,$2,$3,$4,$5,$6,true) ON CONFLICT(model) DO UPDATE SET provider=EXCLUDED.provider,input_cost_per_mtok=EXCLUDED.input_cost_per_mtok,output_cost_per_mtok=EXCLUDED.output_cost_per_mtok,cache_write_cost_per_mtok=EXCLUDED.cache_write_cost_per_mtok,cache_read_cost_per_mtok=EXCLUDED.cache_read_cost_per_mtok,managed_rate=true`, p.Model, p.Provider, rates[0], rates[1], rates[2], rates[3]); err != nil {
 		return err
 	}
-	detail, _ := json.Marshal(p)
+	detail, _ := json.Marshal(map[string]any{"request": p, "resolved_rates": rates})
 	if _, err = tx.ExecContext(ctx, `INSERT INTO org_audit(actor,action,target,detail) VALUES($1,'pricing.rate_set',$2,$3)`, actor, p.Model, string(detail)); err != nil {
 		return err
 	}

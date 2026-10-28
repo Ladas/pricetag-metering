@@ -146,3 +146,37 @@ func TestCreateAPIKeyWithLifetime(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestBulkRevocationRemainsOwnerScoped(t *testing.T) {
+	for _, dry := range []bool{true, false} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/v1/api-keys/bulk-revoke" || r.Method != "POST" {
+				t.Error("wrong operation")
+			}
+			if r.Header.Get("X-MaaS-Username") != "alice" || r.Header.Get("X-MaaS-Group") != `["users"]` || r.Header.Get("X-MaaS-Tenant") != "test" {
+				t.Error("lost owner boundary")
+			}
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			if len(body) != 2 || body["username"] != "alice" || body["dryRun"] != dry {
+				t.Error("unexpected broad revoke fields")
+			}
+			json.NewEncoder(w).Encode(map[string]any{"revokedCount": 3, "dryRun": dry})
+		}))
+		count, err := NewClient(server.URL, "test").RevokeAllUserAPIKeys(context.Background(), "alice", "users", dry)
+		server.Close()
+		if err != nil || count != 3 {
+			t.Fatalf("count=%d error=%v", count, err)
+		}
+	}
+}
+
+func TestKeyListNeverReportsTruncatedResultAsComplete(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"data": []map[string]string{{"id": "fixture"}}, "has_more": true})
+	}))
+	defer server.Close()
+	if keys, err := NewClient(server.URL, "test").ListUserAPIKeys(context.Background(), "alice", "users"); err == nil || keys != nil {
+		t.Fatal("truncated key listing reported success")
+	}
+}

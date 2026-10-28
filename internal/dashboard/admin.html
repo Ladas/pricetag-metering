@@ -899,7 +899,7 @@ function setTabBadge(tab, n, alert) {
   }
 }
 
-var safetyNetPolicy = null, safetyNetModels = [], safetyNetDraft = null;
+var safetyNetPolicy = null, safetyNetModels = [], safetyNetDraft = null, safetyNetModelLabels = {};
 var pricingDiscountPolicy = null, pricingDiscountDraft = null;
 var modelRestrictionsPage = 0, modelRestrictionsPageSize = 50, modelRestrictionsHasMore = false;
 
@@ -909,7 +909,8 @@ function loadSafetyNet() {
     safetyNetDraft = (policy.allowed_over_limit_models || []).slice();
     return fetchJSON('/api/v1/admin/models').then(function(models) {
       safetyNetModels = (Array.isArray(models) ? models : []).map(function(m) {
-        return m.name || m.id || m.model || '';
+        var id=m.targetModel || m.name || m.id || m.model || '';
+        safetyNetModelLabels[id]=m.name||id;return id;
       }).filter(Boolean);
     }).catch(function() { safetyNetModels = []; }).then(renderSafetyNet);
   }).catch(function(err) {
@@ -983,7 +984,7 @@ function renderSafetyNet() {
   var chips = draft.length ? draft.map(function(m, i) {
     return '<span class="badge badge-grn" style="font-size:10px;display:inline-flex;gap:6px;align-items:center;padding:5px 9px;margin:0 6px 6px 0">' + esc(m) + '<button class="btn" style="padding:0;background:none;color:inherit;font-weight:700" onclick="removeSafetyModel(' + i + ')">&times;</button></span>';
   }).join('') : '<span class="ts">No bypass models — over-limit users are fully blocked.</span>';
-  var opts = safetyNetModels.filter(function(m) { return draft.indexOf(m) < 0; }).map(function(m) { return '<option value="' + esc(m) + '">'; }).join('');
+  var opts = safetyNetModels.filter(function(m) { return draft.indexOf(m) < 0; }).map(function(m) { return '<option value="' + esc(m) + '" label="' + esc(safetyNetModelLabels[m]||m) + '">'; }).join('');
   document.getElementById('safety-net-meta').textContent = p.enforced ? 'ENFORCING' : 'tracking only';
   document.getElementById('safety-net-body').innerHTML =
     '<div class="warning" style="margin-bottom:14px"><span class="icon">!</span><div>Enforcement uses month-to-date USD spend. Bypass matching is exact and case-sensitive; the gateway must provide the request model for it to work.</div></div>' +
@@ -992,7 +993,7 @@ function renderSafetyNet() {
       '<div><label class="field-label">Enforcement</label><label style="display:flex;gap:8px;align-items:center;margin-top:9px"><input type="checkbox" id="safety-enforced" style="width:auto" ' + (p.enforced ? 'checked' : '') + '> Block over-limit requests</label></div>' +
     '</div>' +
     '<div style="border-top:1px solid var(--border);padding-top:14px"><label class="field-label">Models allowed after the limit</label><div style="margin:8px 0 12px">' + chips + '</div>' +
-      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><input id="safety-model-add" list="safety-model-list" placeholder="Exact model ID" style="width:320px"><datalist id="safety-model-list">' + opts + '</datalist><button class="btn btn-outline" onclick="addSafetyModel()">Add model</button></div>' +
+      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><input id="safety-model-add" list="safety-model-list" placeholder="Choose or enter the billed model ID" style="width:320px"><datalist id="safety-model-list">' + opts + '</datalist><button class="btn btn-outline" onclick="addSafetyModel()">Add model</button></div>' +
     '</div><div style="margin-top:16px"><button class="btn btn-grn" onclick="saveSafetyNet()">Save safety net</button></div>';
 }
 function addSafetyModel() {

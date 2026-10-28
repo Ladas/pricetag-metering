@@ -1,6 +1,7 @@
 <style>
 .managed-controls section{margin:18px 0;padding:18px 0;border-top:1px solid var(--bdr)}
 .managed-controls h2{font-size:14px;margin-bottom:10px}
+.managed-controls a{color:var(--blu);text-decoration:none}.managed-controls a:hover{text-decoration:underline}
 .managed-controls p{color:var(--t2);margin:8px 0}
 .managed-controls form{display:flex;flex-wrap:wrap;align-items:end;gap:12px;margin:12px 0}
 .managed-controls label{display:flex;flex-direction:column;gap:6px;color:var(--t2);font-size:11px;font-weight:600}
@@ -14,12 +15,16 @@
   <label>Login <input class="tbl-input" name="subject" required></label>
   <label>Name <input class="tbl-input" name="name" required></label>
   <label>State <select class="tbl-input" name="active"><option value="true">Active</option><option value="false">Inactive</option></select></label><button class="btn btn-grn">Save user</button></form>
-<p>New users start with the user role. Set roles and managers in the existing user table below.</p></section>
+<p>Creating a user does not create a key. New users start with the user role. Set roles and managers in the existing user table below.</p></section>
 
 <section>
-<h2>Issue onboarding key</h2><p>Send this one-time key privately to the selected user. They can sign in and manage their own keys.</p><form id="onboard">
+<h2>Issue onboarding key</h2><p>Each submission creates an additional key; existing keys remain valid. Send the key privately to the selected user for sign-in and inference.</p><form id="onboard">
   <label>User <select class="tbl-input" name="subject" required></select></label>
   <label>Key name <input class="tbl-input" name="name" required maxlength="128" value="onboarding"></label>
   <label>Lifetime <input class="tbl-input" name="expiresIn" required value="30d"></label><button class="btn btn-grn">Issue key</button></form>
-<pre id="onboardKey"></pre><button class="btn btn-outline" id="clearKey">Clear displayed key</button></section>
+<p><a id="viewUserUsage" href="#">View selected user’s usage</a> · <a id="viewUserTeam" href="#">View selected user’s team</a> (read-only impersonation)</p>
+<div id="onboardKey" hidden><p>Key created. Copy or download it now; it cannot be retrieved later. Keep the file private.</p><button type="button" class="btn btn-outline" data-key-copy>Copy key</button> <button type="button" class="btn btn-outline" data-key-download>Download .key</button> <button type="button" class="btn btn-outline" data-key-clear>Dismiss key</button></div></section>
+<section><h2>Revoke a user's keys</h2>
+<p>Revokes all active keys across this user's logins. This does not disable the account or revoke an already established browser session. Suspend the user to block all access.</p>
+<form id="revokeUserKeys"><label>User <select class="tbl-input" name="subject" required></select></label><button class="btn btn-outline" type="button" id="countUserKeys">Check active keys</button><button class="btn btn-red">Revoke all keys</button></form><p id="userKeyCount"></p></section>
 <p role="status" id="status"></p></div>

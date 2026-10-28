@@ -3,6 +3,7 @@ package handler
 import (
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/redhat-et/pricetag-metering/internal/config"
@@ -67,6 +68,40 @@ func NewManagementHandler(store *storage.Store, cfg config.Config) http.HandlerF
 			}
 			writeJSON(w, adminPartnerUser(user))
 		case "budgets":
+			if r.Method == http.MethodGet && r.URL.RawQuery != "" {
+				query := r.URL.Query()
+				for name, values := range query {
+					if (name != "offset" && name != "search" && name != "subject") || len(values) != 1 {
+						http.Error(w, "invalid budget query", 400)
+						return
+					}
+				}
+				offset := 0
+				if raw, ok := query["offset"]; ok {
+					var err error
+					offset, err = strconv.Atoi(raw[0])
+					if err != nil || offset < 0 || offset > 1000000 {
+						http.Error(w, "invalid offset", 400)
+						return
+					}
+				}
+				if len(query.Get("search")) > 128 || len(query.Get("subject")) > 128 {
+					http.Error(w, "invalid search", 400)
+					return
+				}
+				rows, more, err := store.UserBudgetOverridesPage(r.Context(), query.Get("search"), query.Get("subject"), 20, offset)
+				if err != nil {
+					http.Error(w, "budget query failed", 500)
+					return
+				}
+				policy, err := store.GetQuotaPolicy(r.Context())
+				if err != nil {
+					http.Error(w, "policy query failed", 500)
+					return
+				}
+				writeJSON(w, map[string]any{"data": rows, "has_more": more, "default_monthly_usd": policy.DefaultMonthlyUSD})
+				return
+			}
 			if r.Method == http.MethodGet {
 				rows, err := store.ListQuotaOverrides(r.Context())
 				if err != nil {

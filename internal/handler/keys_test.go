@@ -105,3 +105,46 @@ func TestStandalonePersonalRevokeChecksOwner(t *testing.T) {
 		t.Fatalf("status=%d", w.Code)
 	}
 }
+
+func TestPersonalKeyPagination(t *testing.T) {
+	for _, tc := range []struct {
+		query string
+		valid bool
+	}{
+		{"?offset=50&status=active", true}, {"?offset=0&status=inactive", true},
+		{"?offset=-1", false}, {"?offset=word", false}, {"?username=bob", false},
+		{"?status=admin", false}, {"?offset=0&offset=50", false},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			cfg := config.Config{UserHeader: "X-User", KeyService: config.KeyService{URL: "https://keys.invalid", UserHeader: "X-User"}}
+			h := NewKeysHandler(nil, cfg, nil)
+			h.client.Transport = keyTransport(func(r *http.Request) (*http.Response, error) {
+				if !tc.valid {
+					t.Fatal("invalid pagination reached upstream")
+				}
+				body, _ := io.ReadAll(r.Body)
+				if !strings.Contains(string(body), `"username":"alice"`) {
+					t.Fatal("lost owner scope")
+				}
+				if strings.Contains(tc.query, "status=active") && (!strings.Contains(string(body), `"status":["active"]`) || !strings.Contains(string(body), `"offset":50`)) {
+					t.Fatal("missing pagination/filter")
+				}
+				if strings.Contains(tc.query, "status=inactive") && !strings.Contains(string(body), `"status":["revoked","expired"]`) {
+					t.Fatal("missing archived filter")
+				}
+				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"data":[],"hasMore":false}`))}, nil
+			})
+			r := httptest.NewRequest("GET", "/me/keys"+tc.query, nil)
+			r.Header.Set("X-User", "alice")
+			w := httptest.NewRecorder()
+			h.HandleKeys(w, r)
+			expected := 400
+			if tc.valid {
+				expected = 200
+			}
+			if w.Code != expected {
+				t.Fatalf("got %d want %d", w.Code, expected)
+			}
+		})
+	}
+}

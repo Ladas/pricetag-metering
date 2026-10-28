@@ -63,18 +63,74 @@ body{background:var(--bg);color:var(--t);font-family:Inter,-apple-system,BlinkMa
 <nav><a href="/management" class="on">My keys</a><a href="/dashboard">Usage</a><a href="/manager" id="tab-team" hidden>My team</a><a href="/admin" id="tab-admin" hidden>Admin</a></nav>
 <div class="ab-right"><span class="ab-user" id="nav-user"></span><a href="/logout" class="ab-out">Sign out</a></div>
 </header>
-<h1 class="page-title">My keys</h1><p id="identity">Loading identity…</p><p>Keys are shown only when created. Store them privately. Administration is available on the Administration page.</p>
-<section class="card"><h2>Key lifecycle</h2><form id="key"><label>Name <input class="tbl-input" name="name" required maxlength="128"></label><label>Lifetime <input class="tbl-input" name="expiresIn" value="30d" required></label><button class="btn btn-grn">Create key</button></form><button class="btn btn-outline" id="listKeys">List my keys</button><div id="keys"></div><pre id="newKey"></pre></section>
+<h1 class="page-title">My keys</h1><p id="identity">Loading identity…</p><p>Create separate keys for your devices or harnesses. Each submission adds a key without rotating existing keys. Copy or download a new key privately; its value is never displayed.</p>
+<section class="card"><h2>Key lifecycle</h2><form id="key"><label>Name <input class="tbl-input" name="name" required maxlength="128"></label><label>Lifetime <input class="tbl-input" name="expiresIn" value="30d" required></label><button class="btn btn-grn">Create key</button></form><button class="btn btn-outline" id="listKeys">List my keys</button><h3>Active keys</h3><div id="keys"></div><div id="activePages"></div><details id="inactiveKeys"><summary>Revoked and expired keys</summary><div id="archivedKeys"></div><div id="inactivePages"></div></details><div id="newKey" hidden><p>Key created. Copy or download it now; it cannot be retrieved later. Keep the file private.</p><button type="button" class="btn btn-outline" data-key-copy>Copy key</button> <button type="button" class="btn btn-outline" data-key-download>Download .key</button> <button type="button" class="btn btn-outline" data-key-clear>Dismiss key</button></div><p>Revoking a key stops its use. Revoked records remain for audit; they are not permanently deleted.</p></section>
 <p role="status" id="status"></p>
 </div>
 <script>
 'use strict';
+/* KEY_CONTROLS */
 const el=id=>document.getElementById(id);
 async function api(path,method='GET',body){const r=await fetch(path,{method,credentials:'same-origin',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,cache:'no-store'});if(!r.ok)throw new Error('Request failed: HTTP '+r.status);const text=await r.text();return text?JSON.parse(text):{};}
 const values=form=>Object.fromEntries(new FormData(form));
 function report(fn){return async event=>{if(event)event.preventDefault();el('status').textContent='Working…';try{await fn();el('status').textContent='Done';}catch(e){el('status').textContent=e.message;}};}
-function bind(id,fn){el(id).addEventListener('submit',report(()=>fn(values(el(id)))));}
-bind('key',async body=>{const result=await api('/me/keys','POST',body);el('newKey').textContent=JSON.stringify(result,null,2);});
-el('listKeys').onclick=report(async()=>{const result=await api('/me/keys');el('newKey').textContent='';el('keys').replaceChildren();for(const key of result.data||[]){const row=document.createElement('p');row.textContent=[key.name,key.id,key.expiresAt||key.expirationDate||''].join(' — ');const b=document.createElement('button');b.textContent='Revoke';b.className='btn btn-outline';b.onclick=report(async()=>{await api('/me/keys/'+encodeURIComponent(key.id),'DELETE');row.remove();});row.append(b);el('keys').append(row);}});
-report(async()=>{const who=await api('/api/v1/whoami');el('identity').textContent='Signed in as '+who.user;el('nav-user').textContent=who.user;el('tab-team').hidden=!who.isManager;el('tab-admin').hidden=!who.isSuperAdmin;if(who.impersonating){el('key').hidden=true;el('listKeys').hidden=true;}})();
+function bind(id,fn){el(id).addEventListener('submit',KeyControls.singleFlight(el(id), report(()=>fn(values(el(id))))));}
+const issuedKey = KeyControls.delivery(el('newKey'));
+for (const [selector, action] of [['[data-key-copy]', () => issuedKey.copy()], ['[data-key-download]', () => issuedKey.download()], ['[data-key-clear]', () => issuedKey.clear()]]) {
+ el('newKey').querySelector(selector).onclick = report(action);
+}
+window.addEventListener('pagehide', () => issuedKey.clear());
+bind('key', async body => {
+ issuedKey.clear();
+ issuedKey.set(await api('/me/keys', 'POST', body));
+ await loadKeys();
+});
+let keyRows = [];
+function refreshKeyTimes() {
+ for (const {key, status, expiry, button, operation} of keyRows) {
+  status.textContent = KeyControls.state(key);
+  const date = KeyControls.expiry(key);
+  expiry.textContent = (date && Number.isFinite(Date.parse(date)) ? new Date(date).toLocaleString() + ' — ' : '') + KeyControls.remaining(key);
+  button.disabled = operation.pending || status.textContent !== 'active';
+ }
+}
+const offsets = {active:0, inactive:0};
+const rowsByStatus = {active:[], inactive:[]};
+async function loadKeys(kind = 'active') {
+ const target = el(kind === 'active' ? 'keys' : 'archivedKeys');
+ const pages = el(kind === 'active' ? 'activePages' : 'inactivePages');
+ const result = await api('/me/keys?status='+kind+'&offset='+offsets[kind]);
+ const keys = [...(result.data || [])].sort((a,b) => Number(KeyControls.state(b)==='active') - Number(KeyControls.state(a)==='active'));
+ target.replaceChildren(); rowsByStatus[kind] = [];
+ for (const key of keys) {
+  const row = document.createElement('p');
+  row.dataset.keyId = key.id;
+  const name = document.createElement('strong'); name.textContent = key.name || key.id;
+  const status = document.createElement('span'); status.className = 'key-status';
+  const expiry = document.createElement('span'); expiry.className = 'key-expiry';
+  const id = document.createElement('small'); id.textContent = key.id;
+  const operation={pending:false};
+  const button = document.createElement('button'); button.className='btn btn-outline'; button.textContent='Revoke';
+  button.onclick = report(async () => {
+   if (button.disabled || !window.confirm('Revoke this key? Applications using it will lose access.')) return;
+   operation.pending=true;button.disabled = true;
+   try {await api('/me/keys/'+encodeURIComponent(key.id), 'DELETE'); key.status='revoked'; refreshKeyTimes();}
+   catch(error) {throw error;}finally{operation.pending=false;refreshKeyTimes();}
+  });
+  row.append(name, ' — ', status, document.createElement('br'), expiry, document.createElement('br'), id, button);
+  target.append(row); rowsByStatus[kind].push({key,status,expiry,button,operation});
+ }
+ if (!keys.length) target.textContent = 'No keys.';
+ keyRows = [...rowsByStatus.active, ...rowsByStatus.inactive];
+ pages.replaceChildren();
+ for (const [label, delta, enabled] of [['Previous', -50, offsets[kind]>0], ['Next', 50, !!result.has_more]]) {
+  const button = document.createElement('button'); button.className='btn btn-outline';button.textContent=label;button.disabled=!enabled;
+  button.onclick=report(async()=>{button.disabled=true;const old=offsets[kind];offsets[kind]+=delta;try{await loadKeys(kind);}catch(error){offsets[kind]=old;button.disabled=false;throw error;}});pages.append(button);
+ }
+ refreshKeyTimes();
+}
+el('listKeys').onclick = report(async()=>{await loadKeys();if(el('inactiveKeys').open)await loadKeys('inactive');});
+el('inactiveKeys').addEventListener('toggle', report(async()=>{if(el('inactiveKeys').open)await loadKeys('inactive');}));
+setInterval(refreshKeyTimes, 1000);
+report(async()=>{const who=await api('/api/v1/whoami');el('identity').textContent='Signed in as '+who.user;el('nav-user').textContent=who.user;el('tab-team').hidden=!who.isManager;el('tab-admin').hidden=!who.isSuperAdmin;if(who.impersonating){el('key').hidden=true;el('listKeys').hidden=true;}else{await loadKeys();}})();
 </script></html>

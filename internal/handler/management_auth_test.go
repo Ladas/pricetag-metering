@@ -115,6 +115,12 @@ func TestManagementSessionChangesRequireConfirmedSameOriginPost(t *testing.T) {
 			req.Header.Set("Origin", tc.origin)
 			w := httptest.NewRecorder()
 			operation.handler(w, req)
+			// This unit fixture deliberately has no account directory. A target
+			// impersonation must fail closed even after a valid origin check.
+			if strings.Contains(operation.path, "as=") && tc.status == 302 {
+				tc.status = 503
+				tc.changes = false
+			}
 			if w.Code != tc.status {
 				t.Fatalf("%s %s status=%d want %d", tc.method, operation.path, w.Code, tc.status)
 			}

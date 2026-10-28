@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 
@@ -228,6 +230,14 @@ func (h *AdminHandler) ServeAdmin(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "administration controls unavailable", http.StatusInternalServerError)
 				return
 			}
+			if marker == "MANAGED_SCRIPT" {
+				controls, err := fs.ReadFile(dashboard.FS, "management-key-controls.js")
+				if err != nil {
+					http.Error(w, "key controls unavailable", 500)
+					return
+				}
+				fragment = []byte(strings.Replace(string(fragment), "/* KEY_CONTROLS */", string(controls), 1))
+			}
 			data = []byte(strings.Replace(string(data), "<!-- "+marker+" -->", string(fragment), 1))
 		}
 	}
@@ -264,6 +274,43 @@ func (h *AdminHandler) HandleProviders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AdminHandler) HandleModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	if h.cfg.GatewayModelsFile != "" {
+		w.Header().Set("Cache-Control", "no-store")
+		file, err := os.Open(h.cfg.GatewayModelsFile)
+		if err != nil {
+			http.Error(w, "gateway catalog unavailable", 503)
+			return
+		}
+		defer file.Close()
+		if info, err := file.Stat(); err != nil || info.Size() > 1<<20 {
+			http.Error(w, "gateway catalog too large", 503)
+			return
+		}
+		var configured []struct {
+			ID       string `json:"id"`
+			Model    string `json:"model"`
+			Provider string `json:"provider"`
+		}
+		decoder := json.NewDecoder(io.LimitReader(file, 1<<20))
+		if decoder.Decode(&configured) != nil || decoder.Decode(new(any)) != io.EOF {
+			http.Error(w, "invalid gateway catalog", 503)
+			return
+		}
+		models := []k8s.ModelInfo{}
+		for _, m := range configured {
+			if strings.TrimSpace(m.ID) == "" || strings.TrimSpace(m.Model) == "" || len(m.Model) > 256 {
+				http.Error(w, "invalid gateway model", 503)
+				return
+			}
+			models = append(models, k8s.ModelInfo{Name: m.ID, TargetModel: m.Model, Provider: m.Provider, ProviderRefs: []k8s.ProviderRef{{ProviderName: m.Provider, TargetModel: m.Model}}})
+		}
+		writeJSON(w, models)
+		return
+	}
 	if h.k8sClient == nil {
 		writeJSON(w, []k8s.ModelInfo{})
 		return

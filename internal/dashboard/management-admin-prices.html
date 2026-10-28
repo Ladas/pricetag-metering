@@ -1,12 +1,20 @@
+<style>
+#price{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:end}
+#price .tbl-input{width:100%}
+#price .price-rates{grid-column:1/-1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+#price>button{width:fit-content}
+@media(max-width:700px){#price,#price .price-rates{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
 <div class="managed-controls">
 <section>
-<h2>Model pricing</h2><p>Rates are USD per million tokens. A pricing alias does not publish a gateway route. Rate changes apply to future events; historical repricing is separate.</p><form id="price">
+<h2>Model pricing</h2><p>Rates are USD per million tokens and are stored in PriceTag’s PostgreSQL database. Saving creates a managed rate that price imports and discount refreshes do not overwrite. Existing request charges stay unchanged; historical repricing is a separate, explicit operation. A price entry does not publish a gateway route.</p><form id="price">
   <label>Model/alias <input class="tbl-input" name="model" required></label>
   <label>Provider <input class="tbl-input" name="provider" required></label>
-  <label>Copy source model (optional) <input class="tbl-input" name="source_model"></label><br>
+  <label>Copy source model (optional) <input class="tbl-input" name="source_model"></label>
+<div class="price-rates">
   <label>Input <input class="tbl-input" name="input_cost_per_mtok" type="number" min="0" step="any" value="0"></label>
   <label>Output <input class="tbl-input" name="output_cost_per_mtok" type="number" min="0" step="any" value="0"></label>
   <label>Cache write <input class="tbl-input" name="cache_write_cost_per_mtok" type="number" min="0" step="any" value="0"></label>
-  <label>Cache read <input class="tbl-input" name="cache_read_cost_per_mtok" type="number" min="0" step="any" value="0"></label><button class="btn btn-grn">Save rates</button></form>
-<button class="btn btn-outline" id="listPrices">List rates</button><pre id="prices"></pre></section>
+  <label>Cache read <input class="tbl-input" name="cache_read_cost_per_mtok" type="number" min="0" step="any" value="0"></label></div><button class="btn btn-grn">Save rates</button></form>
+<details open><summary>Current model rates</summary><form id="priceSearch"><label>Search model or provider <input class="tbl-input" name="search"></label><button class="btn btn-outline">Search</button></form><button type="button" class="btn btn-outline" id="listPrices">Refresh rates</button><div style="overflow-x:auto" id="prices"></div><div id="pricePages"></div></details></section>
 </div>

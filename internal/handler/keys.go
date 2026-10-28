@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -107,7 +108,7 @@ func (h *KeysHandler) HandleKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r.URL.RawQuery != "" {
+	if r.URL.RawQuery != "" && !(r.Method == http.MethodGet && r.URL.Path == "/me/keys") {
 		http.Error(w, "query parameters are not supported", http.StatusBadRequest)
 		return
 	}
@@ -117,7 +118,7 @@ func (h *KeysHandler) HandleKeys(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case r.Method == http.MethodGet && path == "":
-		h.listKeys(w, hdrs)
+		h.listKeys(w, r, hdrs)
 	case r.Method == http.MethodPost && path == "":
 		h.createKey(w, r, hdrs)
 	case r.Method == http.MethodDelete && path != "":
@@ -132,10 +133,36 @@ func (h *KeysHandler) HandleKeys(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *KeysHandler) listKeys(w http.ResponseWriter, hdrs map[string]string) {
-	encoded, _ := json.Marshal(map[string]any{"filters": map[string]string{"username": hdrs[h.cfg.KeyService.UserHeader]}, "pagination": map[string]int{"limit": 50, "offset": 0}})
-	body := string(encoded)
-	h.forward(w, http.MethodPost, "/v1/api-keys/search", hdrs, strings.NewReader(body))
+func (h *KeysHandler) listKeys(w http.ResponseWriter, r *http.Request, hdrs map[string]string) {
+	query := r.URL.Query()
+	for name, values := range query {
+		if (name != "offset" && name != "status") || len(values) != 1 {
+			http.Error(w, "invalid key pagination", 400)
+			return
+		}
+	}
+	offset := 0
+	if raw, ok := query["offset"]; ok {
+		parsed, err := strconv.Atoi(raw[0])
+		if err != nil || parsed < 0 || parsed > 1000000 {
+			http.Error(w, "invalid key offset", 400)
+			return
+		}
+		offset = parsed
+	}
+	filters := map[string]any{"username": hdrs[h.cfg.KeyService.UserHeader]}
+	switch query.Get("status") {
+	case "":
+	case "active":
+		filters["status"] = []string{"active"}
+	case "inactive":
+		filters["status"] = []string{"revoked", "expired"}
+	default:
+		http.Error(w, "invalid key status", 400)
+		return
+	}
+	encoded, _ := json.Marshal(map[string]any{"filters": filters, "pagination": map[string]int{"limit": 50, "offset": offset}})
+	h.forward(w, http.MethodPost, "/v1/api-keys/search", hdrs, bytes.NewReader(encoded))
 }
 
 var keyIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)

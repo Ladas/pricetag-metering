@@ -1,26 +1,103 @@
 <script>
 (function () {
 'use strict';
+/* KEY_CONTROLS */
 const el=id=>document.getElementById(id);
 async function api(path,method='GET',body){const r=await fetch(path,{method,credentials:'same-origin',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,cache:'no-store'});if(!r.ok)throw new Error('Request failed: HTTP '+r.status);const text=await r.text();return text?JSON.parse(text):{};}
 const values=form=>Object.fromEntries(new FormData(form));
 function report(fn){return async event=>{if(event)event.preventDefault();el('status').textContent='Working…';try{await fn();el('status').textContent='Done';showToast('Saved','success');}catch(e){el('status').textContent=e.message;showToast(e.message,'error');}};}
-function bind(id,fn){el(id).addEventListener('submit',report(()=>fn(values(el(id)))));}
+function bind(id,fn){el(id).addEventListener('submit',KeyControls.singleFlight(el(id), report(()=>fn(values(el(id))))));}
 bind('user',async body=>{await api('/api/v1/management/users','PUT',{...body,active:body.active==='true'});await loadUsers();loadPartnerUsers();});
-bind('onboard',async body=>{el('onboardKey').textContent='';el('onboardKey').textContent=JSON.stringify(await api('/api/v1/management/keys','POST',body),null,2);});
-el('clearKey').onclick=()=>{el('onboardKey').textContent='';};
-bind('budget',body=>api('/api/v1/management/budgets','PUT',{subject:body.subject,monthly_usd:Number(body.monthly_usd)}));
-el('removeBudget').onclick=report(()=>api('/api/v1/management/budgets','DELETE',{subject:el('budget').elements.subject.value}));
-bind('price',body=>{if(body.source_model){for(const k of ['input_cost_per_mtok','output_cost_per_mtok','cache_write_cost_per_mtok','cache_read_cost_per_mtok'])delete body[k];}else{delete body.source_model;for(const k of ['input_cost_per_mtok','output_cost_per_mtok','cache_write_cost_per_mtok','cache_read_cost_per_mtok'])body[k]=Number(body[k]);}return api('/api/v1/management/prices','PUT',body);});
-for(const [button,path,target]of[['listBudgets','budgets','budgets'],['listPrices','prices','prices']])el(button).onclick=report(async()=>{el(target).textContent=JSON.stringify(await api('/api/v1/management/'+path),null,2);});
+const issuedKey = KeyControls.delivery(el('onboardKey'));
+for (const [selector, action] of [['[data-key-copy]', () => issuedKey.copy()], ['[data-key-download]', () => issuedKey.download()], ['[data-key-clear]', () => issuedKey.clear()]]) {
+ el('onboardKey').querySelector(selector).onclick = report(action);
+}
+window.addEventListener('pagehide', () => issuedKey.clear());
+function updateViewLinks(){const login=el('onboard').elements.subject.value;el('viewUserUsage').href='/admin/impersonate?as='+encodeURIComponent(login);el('viewUserTeam').href='/admin/impersonate?as='+encodeURIComponent(login)+'&to=/manager';}
+el('onboard').elements.subject.addEventListener('change', () => {issuedKey.clear();updateViewLinks();});
+bind('onboard', async body => {
+ issuedKey.clear(); const select=el('onboard').elements.subject;select.disabled=true;
+ try {issuedKey.set(await api('/api/v1/management/keys', 'POST', body));}
+ finally {select.disabled=false;}
+});
+el('revokeUserKeys').elements.subject.addEventListener('change',()=>{el('userKeyCount').textContent='';});
+el('countUserKeys').onclick=report(async()=>{
+ const subject=el('revokeUserKeys').elements.subject.value;
+ const result=await api('/api/v1/management/key-revocations','POST',{subject,dry_run:true});
+ if(el('revokeUserKeys').elements.subject.value===subject)el('userKeyCount').textContent=result.count+' active keys (checked now).';
+});
+bind('revokeUserKeys',async body=>{
+ if(!window.confirm('Revoke every active key for '+body.subject+'? Their harnesses will lose access.'))return;
+ const result=await api('/api/v1/management/key-revocations','POST',{subject:body.subject,dry_run:false});
+ el('userKeyCount').textContent=result.count+' keys revoked. Keys created afterward remain valid.';
+});
+bind('budget',async body=>{await api('/api/v1/management/budgets','PUT',{subject:body.subject,monthly_usd:Number(body.monthly_usd)});await updateBudgetViews();});
+el('removeBudget').onclick=report(async()=>{await api('/api/v1/management/budgets','DELETE',{subject:el('budget').elements.subject.value});await updateBudgetViews();});
+bind('price',async body=>{if(body.source_model){for(const k of ['input_cost_per_mtok','output_cost_per_mtok','cache_write_cost_per_mtok','cache_read_cost_per_mtok'])delete body[k];}else{delete body.source_model;for(const k of ['input_cost_per_mtok','output_cost_per_mtok','cache_write_cost_per_mtok','cache_read_cost_per_mtok'])body[k]=Number(body[k]);}await api('/api/v1/management/prices','PUT',body);await loadPrices();});
+let priceRows=[],priceOffset=0;
+function renderPrices(){
+ const search=el('priceSearch').elements.search.value.toLowerCase();
+ const rows=priceRows.filter(row=>(row.Model+' '+row.Provider).toLowerCase().includes(search));
+ const table=document.createElement('table');table.className='tbl';
+ const header=document.createElement('tr');for(const label of ['Model','Provider','Input','Output','Cache write','Cache read','Source','Action']){const cell=document.createElement('th');cell.textContent=label;header.append(cell);}table.append(header);
+ for(const item of rows.slice(priceOffset,priceOffset+20)){
+  const row=document.createElement('tr');
+  for(const value of [item.Model,item.Provider,item.InputCost,item.OutputCost,item.CacheWriteCost,item.CacheReadCost,item.Managed?'Managed override':'Imported / bundled']){const cell=document.createElement('td');cell.textContent=String(value);row.append(cell);}
+  const cell=document.createElement('td'),edit=document.createElement('button');edit.type='button';edit.className='btn btn-outline';edit.textContent='Edit rates';
+  edit.onclick=()=>{const form=el('price');for(const [field,value]of Object.entries({model:item.Model,provider:item.Provider,source_model:'',input_cost_per_mtok:item.InputCost,output_cost_per_mtok:item.OutputCost,cache_write_cost_per_mtok:item.CacheWriteCost,cache_read_cost_per_mtok:item.CacheReadCost}))form.elements[field].value=value;form.elements.model.focus();form.scrollIntoView({block:'center'});};
+  cell.append(edit);row.append(cell);table.append(row);
+ }
+ el('prices').replaceChildren(table);if(!rows.length)el('prices').textContent='No matching models.';
+ el('pricePages').replaceChildren();const count=document.createElement('span');count.textContent=rows.length+' models · USD per million tokens ';el('pricePages').append(count);
+ for(const [label,delta,enabled]of[['Previous',-20,priceOffset>0],['Next',20,priceOffset+20<rows.length]]){const button=document.createElement('button');button.type='button';button.className='btn btn-outline';button.textContent=label;button.disabled=!enabled;button.onclick=()=>{priceOffset+=delta;renderPrices();};el('pricePages').append(button);}
+}
+async function loadPrices(){priceRows=await api('/api/v1/management/prices')||[];priceOffset=0;renderPrices();}
+el('listPrices').onclick=report(loadPrices);
+bind('priceSearch',async()=>{if(!priceRows.length)await loadPrices();priceOffset=0;renderPrices();});
+let budgetOffset=0;
+let budgetGeneration=0;
+async function loadSelectedBudget(){
+ const generation=++budgetGeneration;
+ const subject=el('budget').elements.subject.value;
+ el('budget').elements.monthly_usd.disabled=true;el('budget').querySelector('button').disabled=true;el('removeBudget').disabled=true;
+ el('budget').elements.monthly_usd.value='';el('budgetCurrent').textContent='Loading current allowance…';
+ if(!subject){el('budgetCurrent').textContent='Select a user.';return;}
+ const result=await api('/api/v1/management/budgets?subject='+encodeURIComponent(subject));
+ if(generation!==budgetGeneration)return;
+ const override=result.data[0];
+ el('budget').elements.monthly_usd.value=override?override.monthly_usd:result.default_monthly_usd;
+ el('budgetCurrent').textContent=override?'Current override: $'+Number(override.monthly_usd).toFixed(2)+' per month.':'Inherits global default: $'+Number(result.default_monthly_usd).toFixed(2)+' per month.';
+ el('removeBudget').disabled=!override;el('budget').elements.monthly_usd.disabled=false;el('budget').querySelector('button').disabled=false;
+}
+async function updateBudgetViews(){await loadSelectedBudget();if(el('budgetDetails').open)await listBudgets();}
+async function listBudgets(){
+ const result=await api('/api/v1/management/budgets?offset='+budgetOffset+'&search='+encodeURIComponent(el('budgetSearch').elements.search.value));
+ const table=document.createElement('table');table.className='tbl';
+ const head=document.createElement('tr');for(const label of ['Login','Monthly USD','Updated','Action']){const cell=document.createElement('th');cell.textContent=label;head.append(cell);}table.append(head);
+ for(const item of result.data){
+  const row=document.createElement('tr');for(const value of [item.principal,'$'+Number(item.monthly_usd).toFixed(2),new Date(item.updated_at).toLocaleString()]){const cell=document.createElement('td');cell.textContent=value;row.append(cell);}
+  const cell=document.createElement('td'),remove=document.createElement('button');remove.type='button';remove.className='btn btn-outline';remove.textContent='Remove override';
+  remove.onclick=report(async()=>{if(!window.confirm('Remove the override for '+item.principal+' and restore the global default?'))return;remove.disabled=true;try{await api('/api/v1/management/budgets','DELETE',{subject:item.principal});await updateBudgetViews();}catch(error){remove.disabled=false;throw error;}});
+  cell.append(remove);row.append(cell);table.append(row);
+ }
+ el('budgets').replaceChildren(table);if(!result.data.length)el('budgets').textContent='No matching overrides.';
+ el('budgetPages').replaceChildren();
+ for(const [label,delta,enabled]of[['Previous',-20,budgetOffset>0],['Next',20,result.has_more]]){const b=document.createElement('button');b.type='button';b.className='btn btn-outline';b.textContent=label;b.disabled=!enabled;b.onclick=report(async()=>{const previous=budgetOffset;budgetOffset+=delta;b.disabled=true;try{await listBudgets();}catch(error){budgetOffset=previous;b.disabled=false;throw error;}});el('budgetPages').append(b);}
+}
+el('budget').elements.subject.addEventListener('change',report(loadSelectedBudget));
+el('listBudgets').onclick=report(listBudgets);
+el('budgetDetails').addEventListener('toggle',report(async()=>{if(el('budgetDetails').open)await listBudgets();}));
+bind('budgetSearch',async()=>{budgetOffset=0;await listBudgets();});
+
 async function loadUsers(){
  const users=await api('/api/v1/management/users');
- for(const select of [el('budget').elements.subject,el('onboard').elements.subject]){
+ for(const select of [el('budget').elements.subject,el('onboard').elements.subject,el('revokeUserKeys').elements.subject]){
+  if(select.disabled)continue;
   const previous=select.value;select.replaceChildren();
   for(const user of users){const login=(user.logins||[])[0];if(!login)continue;const opt=document.createElement('option');opt.value=login;opt.textContent=(user.tags.first_name||login)+' ('+login+')';select.append(opt);}
   if([...select.options].some(o=>o.value===previous))select.value=previous;
  }
 }
-loadUsers().catch(error => {el('status').textContent=error.message;showToast(error.message,'error');});
+loadUsers().then(()=>{updateViewLinks();return loadSelectedBudget();}).catch(error => {el('status').textContent=error.message;showToast(error.message,'error');});
 })();
 </script>
