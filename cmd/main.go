@@ -302,6 +302,8 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/management/keys", handler.RequireManagement(cfg, store, auth, handler.NewManagementKeysHandler(store, cfg, maasClient)))
 
+	mux.HandleFunc("/api/v1/management/", handler.RequireManagement(cfg, store, auth, handler.NewManagementHandler(store, cfg)))
+
 	// Machine-to-machine APIs — no session required
 	m2mAuth := func(next http.HandlerFunc) http.HandlerFunc { return handler.RequireM2MAuth(cfg, next) }
 	mux.HandleFunc("/api/v1/events", m2mAuth(eventsHandler.HandleEvent))
