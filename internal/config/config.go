@@ -19,6 +19,9 @@ const DefaultMonthlyTokenQuota = 100_000_000
 
 // Config is the resolved runtime configuration.
 type Config struct {
+	ManagementAPISecret    string
+	ManagementPublicOrigin string
+
 	// DatabaseURL is the PostgreSQL connection string. Required.
 	DatabaseURL string
 
@@ -282,6 +285,8 @@ func Load() Config {
 		DBMaxIdleConns:           envInt("DB_MAX_IDLE_CONNS", 10),
 		DBConnMaxLifetimeSeconds: envInt("DB_CONN_MAX_LIFETIME_SECONDS", 14400),
 		EventSource:              envDefault("EVENT_SOURCE", "ai-gateway"),
+		ManagementAPISecret:      os.Getenv("MANAGEMENT_API_SECRET"),
+		ManagementPublicOrigin:   strings.TrimRight(os.Getenv("MANAGEMENT_PUBLIC_ORIGIN"), "/"),
 		UserHeader:               envDefault("AUTH_USER_HEADER", "X-Forwarded-User"),
 		GroupsHeader:             envDefault("AUTH_GROUPS_HEADER", "X-Forwarded-Groups"),
 		AdminUsers:               envList("ADMIN_USERS"),

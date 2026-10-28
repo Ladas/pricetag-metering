@@ -293,8 +293,14 @@ func main() {
 	historicalRepricingHandler := handler.NewHistoricalRepricingHandler(store)
 	modelPolicyAdminHandler := handler.NewModelPolicyAdminHandler(store)
 	auth := authHandler.RequireAuth
+	if cfg.ManagementAPISecret != "" {
+		auth = func(next http.HandlerFunc) http.HandlerFunc {
+			return authHandler.RequireAuth(handler.RequireBrowserOrigin(cfg.ManagementPublicOrigin, next))
+		}
+	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/management/keys", handler.RequireManagement(cfg, store, auth, handler.NewManagementKeysHandler(store, cfg, maasClient)))
 
 	// Machine-to-machine APIs — no session required
 	m2mAuth := func(next http.HandlerFunc) http.HandlerFunc { return handler.RequireM2MAuth(cfg, next) }
@@ -357,8 +363,12 @@ func main() {
 	mux.HandleFunc("/me", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusMovedPermanently)
 	})
-	mux.HandleFunc("/me/keys", auth(keysHandler.HandleKeys))
-	mux.HandleFunc("/me/keys/", auth(keysHandler.HandleKeys))
+	keyAPI := keysHandler.HandleKeys
+	if cfg.ManagementAPISecret != "" {
+		keyAPI = handler.RequireBrowserOrigin(cfg.ManagementPublicOrigin, keyAPI)
+	}
+	mux.HandleFunc("/me/keys", auth(keyAPI))
+	mux.HandleFunc("/me/keys/", auth(keyAPI))
 	mux.HandleFunc("/me/whoami", auth(keysHandler.HandleWhoAmI))
 	mux.HandleFunc("/api/v1/whoami", auth(keysHandler.HandleWhoAmI))
 	mux.HandleFunc("/whoami", auth(keysHandler.HandleWhoAmI))

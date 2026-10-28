@@ -1,12 +1,13 @@
 package handler
 
 import (
+	"bytes"
 	"crypto/tls"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -38,7 +39,8 @@ func NewKeysHandler(k8sClient *k8s.Client, cfg config.Config, store *storage.Sto
 		cfg:       cfg,
 		store:     store,
 		client: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout:       10 * time.Second,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
 					InsecureSkipVerify: cfg.KeyService.InsecureSkipVerify, //nolint:gosec // opt-in for internal self-signed certificates
@@ -54,6 +56,13 @@ func NewKeysHandler(k8sClient *k8s.Client, cfg config.Config, store *storage.Sto
 func (h *KeysHandler) identityHeaders(r *http.Request) map[string]string {
 	user := r.Header.Get(h.cfg.UserHeader)
 	groups := r.Header.Get(h.cfg.GroupsHeader)
+	// Standalone personal operations must never inherit administrative authority
+	// from a current or stale login session. Administrator operations have their
+	// own fresh role checks and are not routed through /me/keys.
+	if h.cfg.ManagementAPISecret != "" {
+		encoded, _ := json.Marshal([]string{h.cfg.DefaultGroup})
+		groups = string(encoded)
+	}
 
 	if groups == "" && h.k8sClient != nil && user != "" {
 		userGroups, _ := h.k8sClient.GetUserGroups(user)
@@ -88,11 +97,20 @@ func (h *KeysHandler) proxy(method, path string, headers map[string]string, body
 }
 
 func (h *KeysHandler) HandleKeys(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Header.Get(realUserHeader) != "" {
+		http.Error(w, "key management is unavailable while impersonating", http.StatusForbidden)
+		return
+	}
 	if !h.cfg.KeyService.Enabled() {
 		http.Error(w, "key management is not configured — set KEY_SERVICE_URL to enable it", http.StatusNotImplemented)
 		return
 	}
 
+	if r.URL.RawQuery != "" {
+		http.Error(w, "query parameters are not supported", http.StatusBadRequest)
+		return
+	}
 	path := strings.TrimPrefix(r.URL.Path, "/me/keys")
 	path = strings.TrimSuffix(path, "/")
 	hdrs := h.identityHeaders(r)
@@ -104,6 +122,10 @@ func (h *KeysHandler) HandleKeys(w http.ResponseWriter, r *http.Request) {
 		h.createKey(w, r, hdrs)
 	case r.Method == http.MethodDelete && path != "":
 		keyID := strings.TrimPrefix(path, "/")
+		if !keyIDPattern.MatchString(keyID) {
+			http.Error(w, "invalid key ID", http.StatusBadRequest)
+			return
+		}
 		h.revokeKey(w, keyID, hdrs)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -111,22 +133,69 @@ func (h *KeysHandler) HandleKeys(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *KeysHandler) listKeys(w http.ResponseWriter, hdrs map[string]string) {
-	body := `{"filters":{},"pagination":{"limit":50,"offset":0},"sort":{"by":"created_at","order":"desc"}}`
+	encoded, _ := json.Marshal(map[string]any{"filters": map[string]string{"username": hdrs[h.cfg.KeyService.UserHeader]}, "pagination": map[string]int{"limit": 50, "offset": 0}})
+	body := string(encoded)
 	h.forward(w, http.MethodPost, "/v1/api-keys/search", hdrs, strings.NewReader(body))
 }
 
+var keyIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+
 func (h *KeysHandler) createKey(w http.ResponseWriter, r *http.Request, hdrs map[string]string) {
-	h.forward(w, http.MethodPost, "/v1/api-keys", hdrs, r.Body)
+	// Identity is derived exclusively from the validated session. MaaS validates
+	// the requested lifetime against its administrator-configured maximum.
+	var body struct {
+		Name         string            `json:"name"`
+		Description  string            `json:"description,omitempty"`
+		Subscription string            `json:"subscription,omitempty"`
+		ExpiresIn    string            `json:"expiresIn,omitempty"`
+		Ephemeral    bool              `json:"ephemeral,omitempty"`
+		Labels       map[string]string `json:"labels,omitempty"`
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		http.Error(w, "invalid key request", 400)
+		return
+	}
+	if err := dec.Decode(new(any)); err != io.EOF {
+		http.Error(w, "expected one key request", 400)
+		return
+	}
+	if len(body.Name) > 128 || (!body.Ephemeral && strings.TrimSpace(body.Name) == "") {
+		http.Error(w, "invalid key name", 400)
+		return
+	}
+	encoded, _ := json.Marshal(body)
+	h.forward(w, http.MethodPost, "/v1/api-keys", hdrs, bytes.NewReader(encoded))
 }
 
 func (h *KeysHandler) revokeKey(w http.ResponseWriter, keyID string, hdrs map[string]string) {
+	if h.cfg.ManagementAPISecret != "" {
+		// Enforce ownership here as well as at MaaS. Even an accidentally
+		// privileged default group must not turn a personal route into admin API.
+		resp, err := h.proxy(http.MethodGet, "/v1/api-keys/"+keyID, hdrs, nil)
+		if err != nil {
+			http.Error(w, "failed to reach key service", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		var key struct {
+			ID       string `json:"id"`
+			Username string `json:"username"`
+		}
+		if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&key) != nil ||
+			key.ID != keyID || key.Username == "" || key.Username != hdrs[h.cfg.KeyService.UserHeader] {
+			http.Error(w, "key not found", http.StatusNotFound)
+			return
+		}
+	}
 	h.forward(w, http.MethodDelete, "/v1/api-keys/"+keyID, hdrs, nil)
 }
 
 func (h *KeysHandler) forward(w http.ResponseWriter, method, path string, hdrs map[string]string, body io.Reader) {
 	resp, err := h.proxy(method, path, hdrs, body)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to reach key service: %v", err), http.StatusBadGateway)
+		http.Error(w, "failed to reach key service", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
@@ -177,6 +246,7 @@ func (h *KeysHandler) HandleWhoAmI(w http.ResponseWriter, r *http.Request) {
 		"isAdmin":           IsPartnerAdmin(r.Context(), h.cfg, h.store, r),
 		"isSuperAdmin":      IsPartnerSuperAdmin(r.Context(), h.cfg, h.store, r),
 		"keyServiceEnabled": h.cfg.KeyService.Enabled(),
+		"managementEnabled": h.cfg.ManagementAPISecret != "",
 		"impersonating":     impersonating,
 		"real_user":         "",
 		// "First Last" for the identity the page is showing (the impersonated

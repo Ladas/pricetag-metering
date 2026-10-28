@@ -7,7 +7,9 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"html"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -65,9 +67,16 @@ func NewAuthHandler(cfg config.Config) *AuthHandler {
 		slog.Warn("SESSION_SECRET not set — using random secret (sessions won't survive restarts)")
 	}
 	return &AuthHandler{
-		cfg:        cfg,
-		secret:     secret,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		cfg:    cfg,
+		secret: secret,
+		httpClient: &http.Client{
+			Timeout: 10 * time.Second,
+			// Validation carries a key in the body; never forward it to a
+			// redirect destination, even on the same host.
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}
 }
 
@@ -148,7 +157,18 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.ParseForm()
+	// Login changes the browser's identity, so it needs CSRF protection even
+	// before a session exists. Keep legacy deployments unchanged.
+	if h.cfg.ManagementAPISecret != "" && (h.cfg.ManagementPublicOrigin == "" ||
+		r.Header.Get("Origin") != h.cfg.ManagementPublicOrigin || r.Header.Get("Sec-Fetch-Site") == "cross-site") {
+		http.Error(w, "same-origin request required", http.StatusForbidden)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid login form", http.StatusBadRequest)
+		return
+	}
 	apiKey := strings.TrimSpace(r.FormValue("api_key"))
 	if apiKey == "" {
 		http.Redirect(w, r, "/login?error=invalid", http.StatusFound)
@@ -235,6 +255,10 @@ func (h *AuthHandler) HandleImpersonate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if !h.confirmSessionChange(w, r, "Change dashboard view") {
+		return
+	}
+
 	target := strings.TrimSpace(r.URL.Query().Get("as"))
 	if target == "" {
 		h.setCookie(w, session.Username, session.Groups, "")
@@ -256,7 +280,33 @@ func (h *AuthHandler) HandleImpersonate(w http.ResponseWriter, r *http.Request) 
 	http.Redirect(w, r, dest, http.StatusFound)
 }
 
+// Session-changing links remain navigable, but GET only renders a confirmation.
+// A browser POST supplies Origin and cannot be triggered by cross-site navigation.
+func (h *AuthHandler) confirmSessionChange(w http.ResponseWriter, r *http.Request, title string) bool {
+	if h.cfg.ManagementAPISecret == "" {
+		return true
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method == http.MethodGet {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>%s</title><h1>%s</h1><form method="post" action="%s"><button type="submit">Continue</button></form><p><a href="/dashboard">Cancel</a></p></html>`, html.EscapeString(title), html.EscapeString(title), html.EscapeString(r.URL.RequestURI()))
+		return false
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return false
+	}
+	if h.cfg.ManagementPublicOrigin == "" || r.Header.Get("Origin") != h.cfg.ManagementPublicOrigin || r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+		http.Error(w, "same-origin request required", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
 func (h *AuthHandler) HandleLogout(w http.ResponseWriter, r *http.Request) {
+	if !h.confirmSessionChange(w, r, "Sign out") {
+		return
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     cookieName,
 		Value:    "",
@@ -280,6 +330,27 @@ func (h *AuthHandler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
+		if h.cfg.ManagementAPISecret != "" {
+			if h.orgStore == nil {
+				http.Error(w, "account directory unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			profile, err := h.orgStore.PartnerUserByMaaSUsername(r.Context(), session.Username)
+			if errors.Is(err, storage.ErrPartnerUserNotFound) {
+				http.Error(w, "account is not provisioned", http.StatusForbidden)
+				return
+			}
+			if err != nil {
+				http.Error(w, "account directory unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			if !profile.Active || profile.KeyRevocationPending {
+				http.Error(w, "account is inactive", http.StatusForbidden)
+				return
+			}
+		}
+		r.Header.Del(realUserHeader)
+		r.Header.Del(h.cfg.GroupsHeader)
 		r.Header.Set(h.cfg.UserHeader, session.Username)
 		if len(session.Groups) > 0 {
 			r.Header.Set(h.cfg.GroupsHeader, fmt.Sprintf(`["%s"]`, strings.Join(session.Groups, `","`)))

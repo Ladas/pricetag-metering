@@ -125,3 +125,24 @@ func TestCreateAPIKeyPreservesMetadataReturnedByMaaS(t *testing.T) {
 		t.Fatalf("MaaS metadata was overwritten: %#v", key)
 	}
 }
+
+func TestCreateAPIKeyWithLifetime(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["expiresIn"] != "2d" || body["name"] != "onboarding" {
+			t.Error("requested lifetime not forwarded")
+		}
+		if r.Header.Get("X-MaaS-Username") != "alice" {
+			t.Error("wrong owner")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"id": "key-1", "key": "test-secret"})
+	}))
+	defer server.Close()
+	_, err := NewClient(server.URL, "").CreateAPIKeyWithLifetime(context.Background(), "alice", "users", "onboarding", "2d")
+	if err != nil {
+		t.Fatal(err)
+	}
+}

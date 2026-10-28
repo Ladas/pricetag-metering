@@ -45,17 +45,27 @@ func NewClient(baseURL, tenant string) *Client {
 		baseURL: baseURL,
 		tenant:  tenant,
 		client: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout:       10 * time.Second,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+				TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 			},
 		},
 	}
 }
 
 func (c *Client) CreateAPIKey(ctx context.Context, username, group, keyName string) (*APIKeyResponse, error) {
+	return c.CreateAPIKeyWithLifetime(ctx, username, group, keyName, "")
+}
+
+// CreateAPIKeyWithLifetime requests a finite lifetime, bounded by MaaS policy.
+func (c *Client) CreateAPIKeyWithLifetime(ctx context.Context, username, group, keyName, expiresIn string) (*APIKeyResponse, error) {
 	username = strings.TrimSpace(username)
-	body, _ := json.Marshal(map[string]string{"name": keyName})
+	payload := map[string]string{"name": keyName}
+	if expiresIn != "" {
+		payload["expiresIn"] = expiresIn
+	}
+	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/api-keys", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
