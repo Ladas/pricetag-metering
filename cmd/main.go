@@ -303,8 +303,8 @@ func main() {
 	if cfg.ManagementAPISecret != "" {
 		mux.HandleFunc("/management", auth(handler.ServeManagement))
 	}
+	mux.HandleFunc("/api/v1/management/gateway/", handler.RequireManagement(cfg, store, auth, handler.NewGatewayManagementHandler(cfg)))
 	mux.HandleFunc("/api/v1/management/keys", handler.RequireManagement(cfg, store, auth, handler.NewManagementKeysHandler(store, cfg, maasClient)))
-
 	mux.HandleFunc("/api/v1/management/", handler.RequireManagement(cfg, store, auth, handler.NewManagementHandler(store, cfg)))
 
 	// Machine-to-machine APIs — no session required

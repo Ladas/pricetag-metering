@@ -30,6 +30,9 @@ A development metering backend for AI inference gateways — provides CloudEvent
   (read-path grants). Full-cluster bring-up lives in the
   [PriceTag deployment repository](https://github.com/redhat-et/pricetag).
 
+- [Opt-in standalone management candidate](docs/standalone-management.md) —
+  configuration, browser/API contracts and deployment security boundaries.
+
 ## Quick Start
 
 ### Docker Compose (local)

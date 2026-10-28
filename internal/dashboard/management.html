@@ -1,7 +1,7 @@
 <!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Account management</title>
 <style>body{font:16px system-ui;margin:2rem auto;max-width:1000px;padding:0 1rem;background:#101820;color:#eee}a{color:#8bd}section{border:1px solid #567;padding:1rem;margin:1rem 0}label{display:inline-block;margin:.4rem}input,select,button{padding:.5rem;margin:.2rem}pre{white-space:pre-wrap;overflow-wrap:anywhere}button{cursor:pointer}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:.5rem;border-bottom:1px solid #567}.admin{display:none}</style>
 <nav><a href="/dashboard">My usage</a> · <a href="/manager">Team usage</a> · <a href="/admin">Administration</a></nav>
-<h1>Account management</h1><p id="identity">Loading identity…</p><p>Keys are shown only when created. Store them privately. Administrative operations require a current administrator role.</p>
+<h1>Account management</h1><p id="identity">Loading identity…</p><p>Keys are shown only when created. Store them privately. Provider and model changes require administrator access and approved destinations.</p>
 <section><h2>My keys</h2><form id="key"><label>Name <input name="name" required maxlength="128"></label><label>Lifetime <input name="expiresIn" value="30d" required></label><button>Create key</button></form><button id="listKeys">List my keys</button><div id="keys"></div><pre id="newKey"></pre></section>
 <div class="admin" id="admin">
 <section><h2>Users</h2><form id="user"><label>Login <input name="subject" required></label><label>Name <input name="name" required></label><label>Role <select name="role"><option>user</option><option>admin</option><option value="super_admin">super administrator</option></select></label><label>State <select name="active"><option value="true">Active</option><option value="false">Inactive</option></select></label><button>Save user</button></form><button id="listUsers">List users</button><div id="users"></div></section>
@@ -9,6 +9,21 @@
 <section><h2>Issue onboarding key</h2><p>Send this one-time key privately to the selected user. They can sign in and manage their own keys.</p><form id="onboard"><label>User <select name="subject" required></select></label><label>Key name <input name="name" required maxlength="128" value="onboarding"></label><label>Lifetime <input name="expiresIn" required value="30d"></label><button>Issue key</button></form><pre id="onboardKey"></pre><button id="clearKey">Clear displayed key</button></section>
 <section><h2>Monthly user budgets</h2><form id="budget"><label>User <select name="subject" required></select></label><label>USD <input type="number" name="monthly_usd" min="0.01" max="10000" step="0.01" value="5" required></label><button>Set override</button><button type="button" id="removeBudget">Use global default</button></form><button id="listBudgets">List overrides</button><pre id="budgets"></pre></section>
 
+<section><h2>Providers and gateway models</h2>
+<p id="gatewayState">Loading configuration…</p>
+<p>Stage changes below, then apply them together. Limits come from provider documentation, not discovery. Configure prices separately. Credentials are write-only.</p>
+<form id="provider"><label>Provider name <input name="name" required pattern="[a-z][a-z0-9-]{0,31}" list="providerNames"></label><datalist id="providerNames"></datalist>
+<label>OpenAI-compatible origin <select name="openai"></select></label><label>Messages origin <select name="anthropic"></select></label>
+<label>Messages authentication <select name="messages_auth"><option value="x-api-key">x-api-key</option><option value="bearer">Bearer</option></select></label>
+<label>New/replacement credential <input type="password" name="credential" autocomplete="off"></label><button>Stage provider</button></form><div id="providerList"></div>
+<form id="gatewayModel"><label>Gateway alias <input name="id" required></label><label>Provider <select name="provider" required></select></label>
+<label>Upstream model ID <input name="model" required list="discoveredModels"></label><datalist id="discoveredModels"></datalist>
+<label><input type="checkbox" name="openai" checked> OpenAI API</label><label><input type="checkbox" name="anthropic"> Messages API</label>
+<label>Context tokens <input name="context" type="number" min="2" max="2000000" required></label><label>Maximum output tokens <input name="output" type="number" min="1" required></label><button>Stage model</button></form>
+<div id="gatewayModels"></div>
+<form id="discover"><label>Saved provider <input name="provider" required list="providerNames"></label><label>API <select name="api"><option>openai</option><option>anthropic</option></select></label><label>Credential <input name="credential" type="password" autocomplete="off" required></label><button>Discover model IDs</button></form>
+<p id="discoveryResult"></p><button id="applyGateway">Apply provider/model changes</button><button id="reloadGateway">Discard staged changes and reload</button>
+</section>
 <section><h2>Model pricing</h2><p>Rates are USD per million tokens. A pricing alias does not publish a gateway route. Rate changes apply to future events; historical repricing is separate.</p><form id="price"><label>Model/alias <input name="model" required></label><label>Provider <input name="provider" required></label><label>Copy source model (optional) <input name="source_model"></label><br><label>Input <input name="input_cost_per_mtok" type="number" min="0" step="any" value="0"></label><label>Output <input name="output_cost_per_mtok" type="number" min="0" step="any" value="0"></label><label>Cache write <input name="cache_write_cost_per_mtok" type="number" min="0" step="any" value="0"></label><label>Cache read <input name="cache_read_cost_per_mtok" type="number" min="0" step="any" value="0"></label><button>Save rates</button></form><button id="listPrices">List rates</button><pre id="prices"></pre></section>
 </div><p role="status" id="status"></p>
 <script>
@@ -47,5 +62,73 @@ async function loadUsers(){
  el('team').elements.user_id.onchange();
 }
 el('listUsers').onclick=report(loadUsers);
-report(async()=>{const who=await api('/api/v1/whoami');el('identity').textContent='Signed in as '+who.user;if(who.isSuperAdmin&&!who.impersonating){el('admin').style.display='block';await loadUsers();}if(who.impersonating){el('key').hidden=true;el('listKeys').hidden=true;}})();
+let gatewayDraft=null, gatewayRevision='', gatewayCredentials={};
+function gatewayRows(){
+ el('providerList').replaceChildren();el('providerNames').replaceChildren();el('gatewayModel').elements.provider.replaceChildren();
+ for(const provider of gatewayDraft.providers){
+  const hint=document.createElement('option');hint.value=provider.name;el('providerNames').append(hint);
+  const option=document.createElement('option');option.value=provider.name;option.textContent=provider.name;el('gatewayModel').elements.provider.append(option);
+  const row=document.createElement('p');row.textContent=provider.name+' — '+Object.keys(provider.urls).join(', ');
+  const edit=document.createElement('button');edit.textContent='Edit provider';edit.onclick=()=>{const f=el('provider').elements;f.name.value=provider.name;f.openai.value=(provider.urls.openai||'').replace(/\/v1$/,'');f.anthropic.value=provider.urls.anthropic||'';f.messages_auth.value=provider.messages_auth;f.credential.value='';};const remove=document.createElement('button');remove.textContent='Remove provider';
+  const inUse=gatewayDraft.models.some(m=>m.provider===provider.name);
+  remove.disabled=inUse||gatewayDraft.providers.length===1;
+  remove.title=inUse?'Remove this provider’s models first':gatewayDraft.providers.length===1?'Keep at least one provider':'Stage removal; apply changes to activate';
+  remove.onclick=()=>{gatewayDraft.providers=gatewayDraft.providers.filter(p=>p.name!==provider.name);delete gatewayCredentials[provider.name];gatewayRows();el('gatewayState').textContent='Provider removal staged; not active yet';};
+  row.append(edit,remove);el('providerList').append(row);
+ }
+ el('gatewayModels').replaceChildren();
+ for(const model of gatewayDraft.models){
+  const row=document.createElement('p');row.textContent=model.id+' → '+model.model+' ('+model.apis.join(', ')+', context '+model.context+', output '+model.output+') ';
+  const edit=document.createElement('button');edit.textContent='Edit model';edit.onclick=()=>{const f=el('gatewayModel').elements;for(const field of ['id','provider','model','context','output'])f[field].value=model[field];f.openai.checked=model.apis.includes('openai');f.anthropic.checked=model.apis.includes('anthropic');};
+  const remove=document.createElement('button');remove.textContent='Remove model';remove.onclick=()=>{gatewayDraft.models=gatewayDraft.models.filter(m=>m.id!==model.id);gatewayRows();el('gatewayState').textContent='Staged changes; not active yet';};row.append(edit,remove);el('gatewayModels').append(row);
+ }
+}
+async function loadGateway(){
+ try{
+  const result=await api('/api/v1/management/gateway/config');gatewayDraft=result.configuration;gatewayRevision=result.revision;gatewayCredentials={};
+  for(const apiName of ['openai','anthropic']){const select=el('provider').elements[apiName];select.replaceChildren();for(const origin of ['',...result.approved_origins]){const o=document.createElement('option');o.value=origin;o.textContent=origin||'Disabled';select.append(o);}}
+  gatewayRows();el('gatewayState').textContent='Active configuration loaded';el('applyGateway').disabled=false;
+ }catch(e){el('gatewayState').textContent='Gateway configuration unavailable: '+e.message;el('applyGateway').disabled=true;}
+}
+bind('provider',body=>{
+ if(!gatewayDraft)throw new Error('Load gateway configuration first');
+ const urls={};if(body.openai)urls.openai=body.openai+'/v1';if(body.anthropic)urls.anthropic=body.anthropic;
+ if(!Object.keys(urls).length)throw new Error('Select at least one API origin');
+ const provider={name:body.name,urls,messages_auth:body.messages_auth};
+ gatewayDraft.providers=gatewayDraft.providers.filter(p=>p.name!==provider.name).concat(provider);
+ if(body.credential)gatewayCredentials[provider.name]=body.credential;
+ el('provider').elements.credential.value='';gatewayRows();el('gatewayState').textContent='Provider staged; not active yet';
+});
+bind('gatewayModel',body=>{
+ if(!gatewayDraft)throw new Error('Load gateway configuration first');
+ const apis=[];for(const name of ['openai','anthropic'])if(el('gatewayModel').elements[name].checked)apis.push(name);
+ const model={id:body.id,provider:body.provider,model:body.model,apis,context:Number(body.context),output:Number(body.output)};
+ gatewayDraft.models=gatewayDraft.models.filter(m=>m.id!==model.id).concat(model);gatewayRows();el('gatewayState').textContent='Model staged; not active yet';
+});
+bind('discover',async body=>{
+ el('discover').elements.credential.value='';
+ const result=await api('/api/v1/management/gateway/discover','POST',body);el('discoveredModels').replaceChildren();
+ for(const id of result.models){const option=document.createElement('option');option.value=id;el('discoveredModels').append(option);}
+ el('discoveryResult').textContent=result.models.length+' model IDs available in the upstream model field. Prices and limits are not supplied by discovery.';
+});
+el('applyGateway').onclick=report(async()=>{
+ if(!gatewayDraft)throw new Error('Load gateway configuration first');
+ el('applyGateway').disabled=true;
+ try{
+  const operation=await api('/api/v1/management/gateway/config','PUT',{revision:gatewayRevision,configuration:gatewayDraft,credentials:gatewayCredentials});
+  el('gatewayState').textContent='Activating; the gateway will restart briefly';
+  let finished=false;
+  for(let attempt=0;attempt<190;attempt++){
+   await new Promise(resolve=>setTimeout(resolve,1000));
+   let status;try{status=await api('/api/v1/management/gateway/status');}catch(e){continue;}
+   if(status.id!==operation.id)throw new Error('Activation status changed; reload and verify configuration');
+   if(status.state==='failed')throw new Error('Activation failed (HTTP '+status.http_status+'); reload and inspect recovery');
+   if(status.state==='complete'){const result=status.result;gatewayRevision=result.revision;gatewayDraft=result.configuration;gatewayCredentials={};gatewayRows();el('gatewayState').textContent='Configuration activated';finished=true;break;}
+  }
+  if(!finished)throw new Error('Activation status timed out; reload and verify before retrying');
+ }
+ finally{el('applyGateway').disabled=false;}
+});
+el('reloadGateway').onclick=report(loadGateway);
+report(async()=>{const who=await api('/api/v1/whoami');el('identity').textContent='Signed in as '+who.user;if(who.isSuperAdmin&&!who.impersonating){el('admin').style.display='block';await loadUsers();await loadGateway();}if(who.impersonating){el('key').hidden=true;el('listKeys').hidden=true;}})();
 </script></html>

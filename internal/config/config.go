@@ -21,9 +21,11 @@ const DefaultMonthlyTokenQuota = 100_000_000
 type Config struct {
 	// UserDashboardsEnabled opts into scoped personal and manager views.
 	// It never grants administrative permissions. Disabled by default.
-	UserDashboardsEnabled  bool
-	ManagementAPISecret    string
-	ManagementPublicOrigin string
+	UserDashboardsEnabled   bool
+	ManagementAPISecret     string
+	ManagementPublicOrigin  string
+	GatewayManagementSocket string
+	GatewayManagementSecret string
 
 	// DatabaseURL is the PostgreSQL connection string. Required.
 	DatabaseURL string
@@ -289,6 +291,8 @@ func Load() Config {
 		DBConnMaxLifetimeSeconds: envInt("DB_CONN_MAX_LIFETIME_SECONDS", 14400),
 		EventSource:              envDefault("EVENT_SOURCE", "ai-gateway"),
 		ManagementAPISecret:      os.Getenv("MANAGEMENT_API_SECRET"),
+		GatewayManagementSocket:  os.Getenv("GATEWAY_MANAGEMENT_SOCKET"),
+		GatewayManagementSecret:  os.Getenv("GATEWAY_MANAGEMENT_SECRET"),
 		ManagementPublicOrigin:   strings.TrimRight(os.Getenv("MANAGEMENT_PUBLIC_ORIGIN"), "/"),
 		UserDashboardsEnabled:    envBool("USER_DASHBOARDS_ENABLED", false),
 		UserHeader:               envDefault("AUTH_USER_HEADER", "X-Forwarded-User"),
