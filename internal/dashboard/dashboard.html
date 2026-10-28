@@ -539,7 +539,7 @@ async function refresh(force){
       api('/api/v1/dashboard/recent?limit=20'+gf+uf+mf,force),
        api('/api/v1/dashboard/users?'+rangeOnly+'&limit=200&savings=false',force),
        api('/api/v1/dashboard/models?'+rangeOnly,force),
-       api('/api/v1/dashboard/directory-users',force)
+       isAdmin ? api('/api/v1/dashboard/directory-users',force) : Promise.resolve([])
        ]);
   cachedOverview=ov;
   cachedGroups=gr;
@@ -563,6 +563,8 @@ async function refresh(force){
    renderUserCostChart();
   renderSavings();
     document.getElementById('last-refresh').textContent=' • '+new Date().toLocaleTimeString();
+  } catch(error) {
+    document.getElementById('last-refresh').textContent='Usage could not be loaded. Select Refresh to retry.';
   } finally {
     if(force&&refreshBtn){refreshBtn.disabled=false;refreshBtn.textContent='Refresh';}
   }
@@ -1108,8 +1110,6 @@ document.getElementById('user-metric-toggle').addEventListener('click',e=>{
 });
 
 syncDateInputs();
-refresh();
-setInterval(refresh,30000);
 
 fetch('/api/v1/whoami').then(function(r){return r.json()}).then(function(d){
   if(d.managementEnabled){
@@ -1157,19 +1157,13 @@ fetch('/api/v1/whoami').then(function(r){return r.json()}).then(function(d){
     if(isSuperAdmin){
       document.querySelectorAll('.superadmin-only').forEach(function(el){el.style.display=el.dataset.show||'';});
     }
-    // The initial refresh above is sufficient; do not issue a second full
-    // dashboard request merely because the caller is a super-admin.
-     if(typeof initDemoPrivacy==='function')initDemoPrivacy(isSuperAdmin);
-    // Pin every non-admin to their own rows so the first frame isn't a
-    // fleet-wide flash. Managers are pinned too now — the Usage page shows
-    // a person their own spend only, managers included (the server scopes
-    // them identically); team spend lives on the My-team page.
-    if(!d.isAdmin&&!userFilter.length){
-      userFilter=[d.user];updateUserFilterLabel();renderUserChecklist();refresh();
-    }
+    if(typeof initDemoPrivacy==='function')initDemoPrivacy(isSuperAdmin);
+    // The server scopes personal Usage to every login of the current identity.
+    // Do not narrow it to the login used for this browser session. Wait for
+    // whoami before refreshing the optional administrator directory roster.
   }
   if(d.quota)renderQuota(d.quota);
-}).catch(function(){});
+}).catch(function(){}).finally(function(){refresh();setInterval(refresh,30000);});
 // ── Model pricing modal (shared rate card across all pages) ─────────
 function pmEsc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 function pmPrice(v){v=+v||0;return v>0?'$'+v.toLocaleString(undefined,{maximumFractionDigits:3}):'<span class="pm-zero">–</span>';}
