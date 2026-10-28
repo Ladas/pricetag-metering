@@ -251,7 +251,7 @@ var insertEventSQL = fmt.Sprintf(`
 		$15::text AS user_agent, $16::int AS status_code) e
 	LEFT JOIN model_pricing p ON p.model = e.model
 	ON CONFLICT DO NOTHING
-	RETURNING cost_usd`, costUSDExpr)
+	RETURNING cost_usd`, currentPriceUSDExpr)
 
 // upsertMonthSpendSQL maintains the exact month-to-date accumulator in the
 // same transaction as the ledger insert. The caller only executes this after
@@ -373,10 +373,13 @@ type ModelUsage struct {
 //
 // Requires usage_events aliased as `e` and model_pricing as `p`. See
 // perRequestCostUSD in postgres_test.go for the executable reference model.
-const costUSDExpr = `GREATEST(e.prompt_tokens - COALESCE(e.cached_input_tokens, 0) - COALESCE(e.cache_creation_tokens, 0), 0) * COALESCE(p.input_cost_per_mtok, 15)/1000000.0 +
+const currentPriceUSDExpr = `GREATEST(e.prompt_tokens - COALESCE(e.cached_input_tokens, 0) - COALESCE(e.cache_creation_tokens, 0), 0) * COALESCE(p.input_cost_per_mtok, 15)/1000000.0 +
 			COALESCE(e.cached_input_tokens, 0) * COALESCE(p.cache_read_cost_per_mtok, 0.5)/1000000.0 +
 			COALESCE(e.cache_creation_tokens, 0) * COALESCE(p.cache_write_cost_per_mtok, 18.75)/1000000.0 +
 			e.completion_tokens * COALESCE(p.output_cost_per_mtok, 75)/1000000.0`
+
+// Reads retain event-time charges; missing legacy values use the current estimate.
+const costUSDExpr = `COALESCE(e.cost_usd, (` + currentPriceUSDExpr + `))`
 
 // listCostUSDExpr mirrors costUSDExpr but prices each term at the vendor
 // list rate (model_pricing.list_*), with a two-tier fallback per term:
@@ -1585,6 +1588,18 @@ func (s *Store) SeedPricing(ctx context.Context, prices []ModelPrice) (int, erro
 		return 0, fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback()
+
+	// Freeze legacy ledger rows before changing the rates used by their
+	// fallback calculation. New events already persist cost_usd at ingestion.
+	if len(prices) > 0 {
+		models := make([]string, 0, len(prices))
+		for _, price := range prices {
+			models = append(models, price.Model)
+		}
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE usage_events u SET cost_usd=q.cost FROM (SELECT e.id,%s AS cost FROM usage_events e LEFT JOIN model_pricing p ON p.model=e.model WHERE e.model=ANY($1) AND e.cost_usd IS NULL) q WHERE u.id=q.id`, currentPriceUSDExpr), pq.Array(models)); err != nil {
+			return 0, fmt.Errorf("preserve legacy charges: %w", err)
+		}
+	}
 
 	updated := 0
 	for _, p := range prices {

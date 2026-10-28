@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
+	"strings"
 )
 
 // LoginProvision is an operator-owned profile contract for non-email identities.
@@ -94,4 +96,58 @@ func (s *Store) ProvisionLogin(ctx context.Context, actor string, p LoginProvisi
 	}
 	s.invalidateQuotaCache()
 	return s.GetPartnerUser(ctx, id)
+}
+
+// ManagedPrice sets a future rate or snapshots a reviewed source under an alias.
+// Existing event charges are immutable; historical repricing is a separate API.
+type ManagedPrice struct {
+	Model       string   `json:"model"`
+	Provider    string   `json:"provider"`
+	SourceModel string   `json:"source_model,omitempty"`
+	Input       *float64 `json:"input_cost_per_mtok,omitempty"`
+	Output      *float64 `json:"output_cost_per_mtok,omitempty"`
+	CacheWrite  *float64 `json:"cache_write_cost_per_mtok,omitempty"`
+	CacheRead   *float64 `json:"cache_read_cost_per_mtok,omitempty"`
+}
+
+func (s *Store) SetManagedPrice(ctx context.Context, actor string, p ManagedPrice) error {
+	if strings.TrimSpace(p.Model) == "" || len(p.Model) > 256 || len(p.Provider) > 128 {
+		return fmt.Errorf("invalid model/provider")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext('model-price'),hashtext($1))`, p.Model); err != nil {
+		return err
+	}
+	var rates [4]float64
+	if p.SourceModel != "" {
+		if p.Input != nil || p.Output != nil || p.CacheWrite != nil || p.CacheRead != nil {
+			return fmt.Errorf("choose source_model or explicit rates")
+		}
+		if err = tx.QueryRowContext(ctx, `SELECT input_cost_per_mtok,output_cost_per_mtok,cache_write_cost_per_mtok,cache_read_cost_per_mtok FROM model_pricing WHERE model=$1`, p.SourceModel).Scan(&rates[0], &rates[1], &rates[2], &rates[3]); err != nil {
+			return err
+		}
+	} else {
+		for i, v := range []*float64{p.Input, p.Output, p.CacheWrite, p.CacheRead} {
+			if v == nil || math.IsNaN(*v) || math.IsInf(*v, 0) || *v < 0 || *v > 1000000 {
+				return fmt.Errorf("four nonnegative finite rates are required")
+			}
+			rates[i] = *v
+		}
+	}
+	// Preserve charges from older, not-yet-backfilled ledger rows before changing rates.
+	if _, err = tx.ExecContext(ctx, fmt.Sprintf(`UPDATE usage_events u SET cost_usd=q.cost FROM (SELECT e.id,%s AS cost FROM usage_events e LEFT JOIN model_pricing p ON p.model=e.model WHERE e.model=$1 AND e.cost_usd IS NULL) q WHERE u.id=q.id`, currentPriceUSDExpr), p.Model); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO model_pricing(model,provider,input_cost_per_mtok,output_cost_per_mtok,cache_write_cost_per_mtok,cache_read_cost_per_mtok) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(model) DO UPDATE SET provider=EXCLUDED.provider,input_cost_per_mtok=EXCLUDED.input_cost_per_mtok,output_cost_per_mtok=EXCLUDED.output_cost_per_mtok,cache_write_cost_per_mtok=EXCLUDED.cache_write_cost_per_mtok,cache_read_cost_per_mtok=EXCLUDED.cache_read_cost_per_mtok`, p.Model, p.Provider, rates[0], rates[1], rates[2], rates[3]); err != nil {
+		return err
+	}
+	detail, _ := json.Marshal(p)
+	if _, err = tx.ExecContext(ctx, `INSERT INTO org_audit(actor,action,target,detail) VALUES($1,'pricing.rate_set',$2,$3)`, actor, p.Model, string(detail)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

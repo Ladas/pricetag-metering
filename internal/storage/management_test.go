@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"fmt"
 	"testing"
+	"time"
 )
 
 func TestManagementLoginPreservesIdentity(t *testing.T) {
@@ -45,5 +47,39 @@ func TestManagementPendingRevocationRejectsActivationAtomically(t *testing.T) {
 	}
 	if actualActive || name != "Original" {
 		t.Fatal("failed activation partially changed the profile")
+	}
+}
+
+func TestManagedPricesPreserveRecordedCharges(t *testing.T) {
+	s, ctx := openTestStore(t)
+	one, zero, ten := 1.0, 0.0, 10.0
+	p := ManagedPrice{Model: "management-fixture", Provider: "mock", Input: &one, Output: &zero, CacheWrite: &zero, CacheRead: &zero}
+	if err := s.SetManagedPrice(ctx, "test", p); err != nil {
+		t.Fatal(err)
+	}
+	event := UsageEvent{EventID: "frozen-before", Timestamp: time.Now(), Username: "alice", Model: p.Model, PromptTokens: 1000000, TotalTokens: 1000000}
+	if err := s.InsertEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	p.Input = &ten
+	if err := s.SetManagedPrice(ctx, "test", p); err != nil {
+		t.Fatal(err)
+	}
+	var charge float64
+	if err := s.db.QueryRowContext(ctx, fmt.Sprintf(`SELECT %s FROM usage_events e LEFT JOIN model_pricing p ON p.model=e.model WHERE e.event_id=$1`, costUSDExpr), event.EventID).Scan(&charge); err != nil {
+		t.Fatal(err)
+	}
+	if charge != 1 {
+		t.Fatalf("old charge changed to %v", charge)
+	}
+	event.EventID = "frozen-after"
+	if err := s.InsertEvent(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT cost_usd FROM usage_events WHERE event_id=$1`, event.EventID).Scan(&charge); err != nil {
+		t.Fatal(err)
+	}
+	if charge != 10 {
+		t.Fatalf("new charge=%v", charge)
 	}
 }

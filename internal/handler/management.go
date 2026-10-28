@@ -109,6 +109,29 @@ func NewManagementHandler(store *storage.Store, cfg config.Config) http.HandlerF
 				return
 			}
 			writeJSON(w, map[string]bool{"updated": true})
+		case "prices":
+			if r.Method == http.MethodGet {
+				rows, err := store.GetCurrentPricing(r.Context())
+				if err != nil {
+					http.Error(w, "price query failed", 500)
+					return
+				}
+				writeJSON(w, rows)
+				return
+			}
+			if r.Method != http.MethodPut {
+				http.Error(w, "method not allowed", 405)
+				return
+			}
+			var body storage.ManagedPrice
+			if !decodeJSON(w, r, &body) {
+				return
+			}
+			if err := store.SetManagedPrice(r.Context(), actor, body); err != nil {
+				http.Error(w, "price update rejected", 400)
+				return
+			}
+			writeJSON(w, map[string]bool{"updated": true})
 		default:
 			http.NotFound(w, r)
 		}
