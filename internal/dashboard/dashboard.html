@@ -193,6 +193,7 @@ tr.clickable{cursor:pointer}
 <header class="appbar">
   <a class="logo" href="/dashboard">Price<em>Tag</em></a>
   <nav>
+    <a href="/management" id="tab-management" style="display:none">Account management</a>
     <a href="/dashboard" class="on">Usage</a>
     <a href="/manager" id="tab-team" style="display:none" title="Usage for everyone on your team">My team</a>
     <a href="/routing" id="tab-routing" style="display:none">Routing</a>
@@ -1112,6 +1113,7 @@ setInterval(refresh,30000);
 
 fetch('/api/v1/whoami').then(function(r){return r.json()}).then(function(d){
   if(d.managementEnabled){
+    document.getElementById('tab-management').style.display='';
     if(d.quota){
       var q=d.quota;document.getElementById('standalone-budget').hidden=false;
       document.getElementById('standalone-budget-value').textContent=q.exempt?'Administrator — exempt from the USD budget gate':
@@ -1136,6 +1138,7 @@ fetch('/api/v1/whoami').then(function(r){return r.json()}).then(function(d){
     if(d.isSuperAdmin||d.isManager)document.getElementById('tab-team').style.display='';
     if(isSuperAdmin){
       ['tab-routing','tab-admin'].forEach(function(id){document.getElementById(id).style.display='';});
+      if(d.managementEnabled)document.getElementById('tab-routing').style.display='none';
       var mvb=document.getElementById('my-view-btn');
       mvb.href='/admin/impersonate?as='+encodeURIComponent(d.user);
       mvb.style.display='';

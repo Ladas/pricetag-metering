@@ -1,0 +1,51 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Account management</title>
+<style>body{font:16px system-ui;margin:2rem auto;max-width:1000px;padding:0 1rem;background:#101820;color:#eee}a{color:#8bd}section{border:1px solid #567;padding:1rem;margin:1rem 0}label{display:inline-block;margin:.4rem}input,select,button{padding:.5rem;margin:.2rem}pre{white-space:pre-wrap;overflow-wrap:anywhere}button{cursor:pointer}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:.5rem;border-bottom:1px solid #567}.admin{display:none}</style>
+<nav><a href="/dashboard">My usage</a> · <a href="/manager">Team usage</a> · <a href="/admin">Administration</a></nav>
+<h1>Account management</h1><p id="identity">Loading identity…</p><p>Keys are shown only when created. Store them privately. Administrative operations require a current administrator role.</p>
+<section><h2>My keys</h2><form id="key"><label>Name <input name="name" required maxlength="128"></label><label>Lifetime <input name="expiresIn" value="30d" required></label><button>Create key</button></form><button id="listKeys">List my keys</button><div id="keys"></div><pre id="newKey"></pre></section>
+<div class="admin" id="admin">
+<section><h2>Users</h2><form id="user"><label>Login <input name="subject" required></label><label>Name <input name="name" required></label><label>Role <select name="role"><option>user</option><option>admin</option><option value="super_admin">super administrator</option></select></label><label>State <select name="active"><option value="true">Active</option><option value="false">Inactive</option></select></label><button>Save user</button></form><button id="listUsers">List users</button><div id="users"></div></section>
+<section><h2>Team relationships</h2><p>Select a user and their manager. Manager status follows the reporting hierarchy; it does not require an administrator role.</p><form id="team"><label>User <select name="user_id" required></select></label><label>Manager <select name="manager_user_id"></select></label><label>User role <select name="role"><option>user</option><option>admin</option><option value="super_admin">super administrator</option></select></label><button>Save relationship</button></form></section>
+<section><h2>Issue onboarding key</h2><p>Send this one-time key privately to the selected user. They can sign in and manage their own keys.</p><form id="onboard"><label>User <select name="subject" required></select></label><label>Key name <input name="name" required maxlength="128" value="onboarding"></label><label>Lifetime <input name="expiresIn" required value="30d"></label><button>Issue key</button></form><pre id="onboardKey"></pre><button id="clearKey">Clear displayed key</button></section>
+<section><h2>Monthly user budgets</h2><form id="budget"><label>User <select name="subject" required></select></label><label>USD <input type="number" name="monthly_usd" min="0.01" max="10000" step="0.01" value="5" required></label><button>Set override</button><button type="button" id="removeBudget">Use global default</button></form><button id="listBudgets">List overrides</button><pre id="budgets"></pre></section>
+
+<section><h2>Model pricing</h2><p>Rates are USD per million tokens. A pricing alias does not publish a gateway route. Rate changes apply to future events; historical repricing is separate.</p><form id="price"><label>Model/alias <input name="model" required></label><label>Provider <input name="provider" required></label><label>Copy source model (optional) <input name="source_model"></label><br><label>Input <input name="input_cost_per_mtok" type="number" min="0" step="any" value="0"></label><label>Output <input name="output_cost_per_mtok" type="number" min="0" step="any" value="0"></label><label>Cache write <input name="cache_write_cost_per_mtok" type="number" min="0" step="any" value="0"></label><label>Cache read <input name="cache_read_cost_per_mtok" type="number" min="0" step="any" value="0"></label><button>Save rates</button></form><button id="listPrices">List rates</button><pre id="prices"></pre></section>
+</div><p role="status" id="status"></p>
+<script>
+'use strict';
+const el=id=>document.getElementById(id);
+async function api(path,method='GET',body){const r=await fetch(path,{method,credentials:'same-origin',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,cache:'no-store'});if(!r.ok)throw new Error('Request failed: HTTP '+r.status);const text=await r.text();return text?JSON.parse(text):{};}
+const values=form=>Object.fromEntries(new FormData(form));
+function report(fn){return async event=>{if(event)event.preventDefault();el('status').textContent='Working…';try{await fn();el('status').textContent='Done';}catch(e){el('status').textContent=e.message;}};}
+function bind(id,fn){el(id).addEventListener('submit',report(()=>fn(values(el(id)))));}
+bind('key',async body=>{const result=await api('/me/keys','POST',body);el('newKey').textContent=JSON.stringify(result,null,2);});
+el('listKeys').onclick=report(async()=>{const result=await api('/me/keys');el('newKey').textContent='';el('keys').replaceChildren();for(const key of result.data||[]){const row=document.createElement('p');row.textContent=[key.name,key.id,key.expiresAt||key.expirationDate||''].join(' — ');const b=document.createElement('button');b.textContent='Revoke';b.onclick=report(async()=>{await api('/me/keys/'+encodeURIComponent(key.id),'DELETE');row.remove();});row.append(b);el('keys').append(row);}});
+bind('user',async body=>{await api('/api/v1/management/users','PUT',{...body,active:body.active==='true'});await loadUsers();});
+bind('onboard',async body=>{el('onboardKey').textContent='';el('onboardKey').textContent=JSON.stringify(await api('/api/v1/management/keys','POST',body),null,2);});
+el('clearKey').onclick=()=>{el('onboardKey').textContent='';el('newKey').textContent='';};
+bind('team',body=>api('/api/v1/admin/partner-users/'+encodeURIComponent(body.user_id),'PATCH',{role:body.role,manager_user_id:body.manager_user_id||null}));
+bind('budget',body=>api('/api/v1/management/budgets','PUT',{subject:body.subject,monthly_usd:Number(body.monthly_usd)}));
+el('removeBudget').onclick=report(()=>api('/api/v1/management/budgets','DELETE',{subject:el('budget').elements.subject.value}));
+bind('price',body=>{if(body.source_model){for(const k of ['input_cost_per_mtok','output_cost_per_mtok','cache_write_cost_per_mtok','cache_read_cost_per_mtok'])delete body[k];}else{delete body.source_model;for(const k of ['input_cost_per_mtok','output_cost_per_mtok','cache_write_cost_per_mtok','cache_read_cost_per_mtok'])body[k]=Number(body[k]);}return api('/api/v1/management/prices','PUT',body);});
+for(const [button,path,target]of[['listBudgets','budgets','budgets'],['listPrices','prices','prices']])el(button).onclick=report(async()=>{el(target).textContent=JSON.stringify(await api('/api/v1/management/'+path),null,2);});
+async function loadUsers(){
+ const users=await api('/api/v1/management/users');
+ el('users').replaceChildren();
+ const table=document.createElement('table');
+ const header=document.createElement('tr');for(const title of ['Name / login','Role','State','Action']){const th=document.createElement('th');th.textContent=title;header.append(th);}table.append(header);
+ const selects=[el('team').elements.user_id,el('team').elements.manager_user_id,el('budget').elements.subject,el('onboard').elements.subject];
+ for(const select of selects)select.replaceChildren();
+ const none=document.createElement('option');none.value='';none.textContent='No manager';selects[1].append(none);
+ for(const user of users){
+  const login=(user.logins||[])[0];const label=(user.tags.first_name||login||user.user_id)+(login?' ('+login+')':'');
+  for(let i=0;i<selects.length;i++){if(i>=2&&!login)continue;const opt=document.createElement('option');opt.value=i<2?user.user_id:login;opt.textContent=label;selects[i].append(opt);}
+  const row=document.createElement('tr');for(const value of [label,user.role,user.active?'Active':'Inactive']){const td=document.createElement('td');td.textContent=value;row.append(td);}
+  const td=document.createElement('td');const edit=document.createElement('button');edit.textContent='Edit';edit.onclick=()=>{const form=el('user').elements;form.subject.value=login||'';form.name.value=user.tags.first_name||'';form.role.value=user.role;form.active.value=String(user.active);el('team').elements.user_id.value=user.user_id;el('team').elements.manager_user_id.value=user.manager_user_id||'';el('team').elements.role.value=user.role;};td.append(edit);row.append(td);table.append(row);
+ }
+ el('users').append(table);
+ el('team').elements.user_id.onchange=()=>{const u=users.find(u=>u.user_id===el('team').elements.user_id.value);if(u){el('team').elements.role.value=u.role;el('team').elements.manager_user_id.value=u.manager_user_id||'';}};
+ el('team').elements.user_id.onchange();
+}
+el('listUsers').onclick=report(loadUsers);
+report(async()=>{const who=await api('/api/v1/whoami');el('identity').textContent='Signed in as '+who.user;if(who.isSuperAdmin&&!who.impersonating){el('admin').style.display='block';await loadUsers();}if(who.impersonating){el('key').hidden=true;el('listKeys').hidden=true;}})();
+</script></html>

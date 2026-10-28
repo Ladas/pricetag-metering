@@ -300,6 +300,9 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
+	if cfg.ManagementAPISecret != "" {
+		mux.HandleFunc("/management", auth(handler.ServeManagement))
+	}
 	mux.HandleFunc("/api/v1/management/keys", handler.RequireManagement(cfg, store, auth, handler.NewManagementKeysHandler(store, cfg, maasClient)))
 
 	mux.HandleFunc("/api/v1/management/", handler.RequireManagement(cfg, store, auth, handler.NewManagementHandler(store, cfg)))

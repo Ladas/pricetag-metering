@@ -542,9 +542,10 @@ td .tag{white-space:nowrap}
 <header class="appbar">
   <a class="logo" href="/dashboard">Price<em>Tag</em></a>
   <nav>
+    <a href="/management" id="tab-management" style="display:none">Account management</a>
     <a href="/dashboard">Usage</a>
     <a href="/manager" id="team-tab" style="display:none" title="Usage for everyone on your team">My team</a>
-    <a href="/routing">Routing</a>
+    <a href="/routing" id="legacy-routing">Routing</a>
     <a href="/admin" class="on">Admin</a>
   </nav>
   <div class="ab-right">
@@ -2459,6 +2460,7 @@ function execConfirm() {
 <script>
 /* Header identity (post MaaS-key auth) + "My view as user" target. */
 fetch("/whoami").then(function(r){return r.json()}).then(function(d){
+  if(d.managementEnabled){document.getElementById("tab-management").style.display="";document.getElementById("legacy-routing").style.display="none";}
   var el=document.getElementById("abUser");
   if(d.user&&el){
     var name=d.display_name?d.display_name:d.user;
