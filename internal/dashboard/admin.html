@@ -542,9 +542,10 @@ td .tag{white-space:nowrap}
 <header class="appbar">
   <a class="logo" href="/dashboard">Price<em>Tag</em></a>
   <nav>
+    <a href="/management" id="tab-management" style="display:none">My keys</a>
     <a href="/dashboard">Usage</a>
     <a href="/manager" id="team-tab" style="display:none" title="Usage for everyone on your team">My team</a>
-    <a href="/routing">Routing</a>
+    <a href="/routing" id="legacy-routing">Routing</a>
     <a href="/admin" class="on">Admin</a>
   </nav>
   <div class="ab-right">
@@ -628,6 +629,7 @@ td .tag{white-space:nowrap}
       </select>
     </label>
   </div>
+  <!-- MANAGED_USERS -->
   <div id="partner-users-list"><div class="loading"><div class="spinner"></div>Loading partner users...</div></div>
   <div class="partner-users-pager"><button id="partner-users-prev" onclick="changePartnerUsersPage(-1)">Previous</button><span id="partner-users-page-label">Page 1</span><button id="partner-users-next" onclick="changePartnerUsersPage(1)">Next</button></div>
   </div>
@@ -649,6 +651,7 @@ td .tag{white-space:nowrap}
   <div class="card">
     <div class="card-hdr"><div><span class="card-title">Monthly Safety Net</span><span class="card-count" id="safety-net-meta"></span></div><button class="btn btn-outline" style="padding:5px 12px;font-size:10px" onclick="loadSafetyNet()">Refresh</button></div>
     <div class="ts" style="margin-bottom:14px">Global month-to-date spend protection. Users are blocked at the limit except for the exact models listed as bypass models. Super-admins are exempt.</div>
+    <!-- MANAGED_BUDGETS -->
     <div id="safety-net-body"><div class="loading"><div class="spinner"></div>Loading safety-net policy...</div></div>
   </div>
 </div>
@@ -658,6 +661,7 @@ td .tag{white-space:nowrap}
   <div class="card">
     <div class="card-hdr"><div><span class="card-title">Commercial Pricing Discounts</span><span class="card-count" id="pricing-discounts-meta"></span></div><button class="btn btn-outline" style="padding:5px 12px;font-size:10px" onclick="loadPricingDiscounts()">Refresh</button></div>
     <div class="ts" style="margin-bottom:14px">Super-admin-only effective-rate policy. Vendor list prices remain unchanged. Changes are audited and apply on the next pricing refresh or Metering restart.</div>
+    <!-- MANAGED_PRICES -->
     <div id="pricing-discounts-body"><div class="loading"><div class="spinner"></div>Loading pricing policy...</div></div>
   </div>
 </div>
@@ -2459,6 +2463,7 @@ function execConfirm() {
 <script>
 /* Header identity (post MaaS-key auth) + "My view as user" target. */
 fetch("/whoami").then(function(r){return r.json()}).then(function(d){
+  if(d.managementEnabled){document.getElementById("tab-management").style.display="";document.getElementById("legacy-routing").style.display="none";}
   var el=document.getElementById("abUser");
   if(d.user&&el){
     var name=d.display_name?d.display_name:d.user;
@@ -2525,5 +2530,6 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape')closePricing
     window.addEventListener('storage',function(e){if(e.key===KEY)apply(e.newValue==='1')});
   };
 })();
-</script></body>
+</script><!-- MANAGED_SCRIPT -->
+</body>
 </html>

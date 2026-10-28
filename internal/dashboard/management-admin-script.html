@@ -1,0 +1,26 @@
+<script>
+(function () {
+'use strict';
+const el=id=>document.getElementById(id);
+async function api(path,method='GET',body){const r=await fetch(path,{method,credentials:'same-origin',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,cache:'no-store'});if(!r.ok)throw new Error('Request failed: HTTP '+r.status);const text=await r.text();return text?JSON.parse(text):{};}
+const values=form=>Object.fromEntries(new FormData(form));
+function report(fn){return async event=>{if(event)event.preventDefault();el('status').textContent='Working…';try{await fn();el('status').textContent='Done';showToast('Saved','success');}catch(e){el('status').textContent=e.message;showToast(e.message,'error');}};}
+function bind(id,fn){el(id).addEventListener('submit',report(()=>fn(values(el(id)))));}
+bind('user',async body=>{await api('/api/v1/management/users','PUT',{...body,active:body.active==='true'});await loadUsers();loadPartnerUsers();});
+bind('onboard',async body=>{el('onboardKey').textContent='';el('onboardKey').textContent=JSON.stringify(await api('/api/v1/management/keys','POST',body),null,2);});
+el('clearKey').onclick=()=>{el('onboardKey').textContent='';};
+bind('budget',body=>api('/api/v1/management/budgets','PUT',{subject:body.subject,monthly_usd:Number(body.monthly_usd)}));
+el('removeBudget').onclick=report(()=>api('/api/v1/management/budgets','DELETE',{subject:el('budget').elements.subject.value}));
+bind('price',body=>{if(body.source_model){for(const k of ['input_cost_per_mtok','output_cost_per_mtok','cache_write_cost_per_mtok','cache_read_cost_per_mtok'])delete body[k];}else{delete body.source_model;for(const k of ['input_cost_per_mtok','output_cost_per_mtok','cache_write_cost_per_mtok','cache_read_cost_per_mtok'])body[k]=Number(body[k]);}return api('/api/v1/management/prices','PUT',body);});
+for(const [button,path,target]of[['listBudgets','budgets','budgets'],['listPrices','prices','prices']])el(button).onclick=report(async()=>{el(target).textContent=JSON.stringify(await api('/api/v1/management/'+path),null,2);});
+async function loadUsers(){
+ const users=await api('/api/v1/management/users');
+ for(const select of [el('budget').elements.subject,el('onboard').elements.subject]){
+  const previous=select.value;select.replaceChildren();
+  for(const user of users){const login=(user.logins||[])[0];if(!login)continue;const opt=document.createElement('option');opt.value=login;opt.textContent=(user.tags.first_name||login)+' ('+login+')';select.append(opt);}
+  if([...select.options].some(o=>o.value===previous))select.value=previous;
+ }
+}
+loadUsers().catch(error => {el('status').textContent=error.message;showToast(error.message,'error');});
+})();
+</script>

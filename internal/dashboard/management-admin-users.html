@@ -1,0 +1,25 @@
+<style>
+.managed-controls section{margin:18px 0;padding:18px 0;border-top:1px solid var(--bdr)}
+.managed-controls h2{font-size:14px;margin-bottom:10px}
+.managed-controls p{color:var(--t2);margin:8px 0}
+.managed-controls form{display:flex;flex-wrap:wrap;align-items:end;gap:12px;margin:12px 0}
+.managed-controls label{display:flex;flex-direction:column;gap:6px;color:var(--t2);font-size:11px;font-weight:600}
+.managed-controls .tbl-input{width:200px;max-width:100%;min-height:34px}
+.managed-controls select.tbl-input{width:260px}
+.managed-controls .btn{min-height:34px}
+.managed-controls pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto}
+</style><div class="managed-controls" id="admin">
+<section>
+<h2>Create or update a login</h2><form id="user">
+  <label>Login <input class="tbl-input" name="subject" required></label>
+  <label>Name <input class="tbl-input" name="name" required></label>
+  <label>State <select class="tbl-input" name="active"><option value="true">Active</option><option value="false">Inactive</option></select></label><button class="btn btn-grn">Save user</button></form>
+<p>New users start with the user role. Set roles and managers in the existing user table below.</p></section>
+
+<section>
+<h2>Issue onboarding key</h2><p>Send this one-time key privately to the selected user. They can sign in and manage their own keys.</p><form id="onboard">
+  <label>User <select class="tbl-input" name="subject" required></select></label>
+  <label>Key name <input class="tbl-input" name="name" required maxlength="128" value="onboarding"></label>
+  <label>Lifetime <input class="tbl-input" name="expiresIn" required value="30d"></label><button class="btn btn-grn">Issue key</button></form>
+<pre id="onboardKey"></pre><button class="btn btn-outline" id="clearKey">Clear displayed key</button></section>
+<p role="status" id="status"></p></div>

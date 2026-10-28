@@ -1,0 +1,12 @@
+<div class="managed-controls">
+<section>
+<h2>Model pricing</h2><p>Rates are USD per million tokens. A pricing alias does not publish a gateway route. Rate changes apply to future events; historical repricing is separate.</p><form id="price">
+  <label>Model/alias <input class="tbl-input" name="model" required></label>
+  <label>Provider <input class="tbl-input" name="provider" required></label>
+  <label>Copy source model (optional) <input class="tbl-input" name="source_model"></label><br>
+  <label>Input <input class="tbl-input" name="input_cost_per_mtok" type="number" min="0" step="any" value="0"></label>
+  <label>Output <input class="tbl-input" name="output_cost_per_mtok" type="number" min="0" step="any" value="0"></label>
+  <label>Cache write <input class="tbl-input" name="cache_write_cost_per_mtok" type="number" min="0" step="any" value="0"></label>
+  <label>Cache read <input class="tbl-input" name="cache_read_cost_per_mtok" type="number" min="0" step="any" value="0"></label><button class="btn btn-grn">Save rates</button></form>
+<button class="btn btn-outline" id="listPrices">List rates</button><pre id="prices"></pre></section>
+</div>

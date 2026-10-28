@@ -166,6 +166,7 @@ td.num{text-align:right}
 <header class="appbar">
   <a class="logo" href="/dashboard">Price<em>Tag</em></a>
   <nav>
+    <a href="/management" id="tab-management" style="display:none">My keys</a>
     <a href="/dashboard">Usage</a>
     <a href="/manager" class="on" title="Usage for everyone on your team">My team</a>
     <a href="/routing" id="tab-routing" style="display:none">Routing</a>
@@ -1046,6 +1047,7 @@ document.getElementById('umToggle').addEventListener('click',e=>{
 
 async function boot(){
   try{ me=await (await fetch('/api/v1/whoami')).json(); }catch(e){}
+  if(me.managementEnabled)document.getElementById('tab-management').style.display='';
   // Header identity + role-gated tabs (same convention as every page).
   const ab=document.getElementById('abUser');
   ab.innerHTML='<span class="demo-pii">'+esc(me.display_name||me.user||'')+'</span>';
@@ -1057,6 +1059,7 @@ async function boot(){
   }
   if(me.isSuperAdmin){
     ['tab-routing','tab-admin'].forEach(id=>document.getElementById(id).style.display='');
+    if(me.managementEnabled)document.getElementById('tab-routing').style.display='none';
     const mvb=document.getElementById('my-view-btn');
     mvb.href='/admin/impersonate?as='+encodeURIComponent(me.user);
     mvb.style.display='';

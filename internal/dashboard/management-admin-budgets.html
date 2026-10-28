@@ -1,0 +1,7 @@
+<div class="managed-controls">
+<section>
+<h2>Monthly user budgets</h2><form id="budget">
+  <label>User <select class="tbl-input" name="subject" required></select></label>
+  <label>USD <input class="tbl-input" type="number" name="monthly_usd" min="0.01" max="10000" step="0.01" value="5" required></label><button class="btn btn-grn">Set override</button><button class="btn btn-outline" type="button" id="removeBudget">Use global default</button></form>
+<button class="btn btn-outline" id="listBudgets">List overrides</button><pre id="budgets"></pre></section>
+</div>

@@ -216,6 +216,21 @@ func (h *AdminHandler) ServeAdmin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "admin page not found", http.StatusInternalServerError)
 		return
 	}
+	if h.cfg.ManagementAPISecret != "" {
+		for marker, file := range map[string]string{
+			"MANAGED_USERS":   "management-admin-users.html",
+			"MANAGED_BUDGETS": "management-admin-budgets.html",
+			"MANAGED_PRICES":  "management-admin-prices.html",
+			"MANAGED_SCRIPT":  "management-admin-script.html",
+		} {
+			fragment, err := fs.ReadFile(dashboard.FS, file)
+			if err != nil {
+				http.Error(w, "administration controls unavailable", http.StatusInternalServerError)
+				return
+			}
+			data = []byte(strings.Replace(string(data), "<!-- "+marker+" -->", string(fragment), 1))
+		}
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Write(data)
