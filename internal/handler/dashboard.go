@@ -148,6 +148,11 @@ func (h *DashboardHandler) HandleUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DashboardHandler) HandleDirectoryUsers(w http.ResponseWriter, r *http.Request) {
+	// Directory browsing remains administrative when scoped views are enabled.
+	if !IsPartnerAdmin(r.Context(), h.cfg, h.store, r) {
+		http.Error(w, "administrator access required", http.StatusForbidden)
+		return
+	}
 	result, err := h.store.ListDashboardDirectoryUsers(r.Context())
 	if err != nil {
 		slog.Error("dashboard directory query failed", "error", err)

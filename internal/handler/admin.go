@@ -146,7 +146,7 @@ func IsPartnerAdminUsername(ctx context.Context, cfg config.Config, store *stora
 
 func RequirePartnerAdminPage(cfg config.Config, store *storage.Store, next, comingSoon http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !IsPartnerAdmin(r.Context(), cfg, store, r) {
+		if !(cfg.UserDashboardsEnabled && strings.TrimSpace(r.Header.Get(cfg.UserHeader)) != "") && !IsPartnerAdmin(r.Context(), cfg, store, r) {
 			comingSoon(w, r)
 			return
 		}
@@ -156,7 +156,7 @@ func RequirePartnerAdminPage(cfg config.Config, store *storage.Store, next, comi
 
 func RequirePartnerAdminAPI(cfg config.Config, store *storage.Store, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !IsPartnerAdmin(r.Context(), cfg, store, r) {
+		if !(cfg.UserDashboardsEnabled && strings.TrimSpace(r.Header.Get(cfg.UserHeader)) != "") && !IsPartnerAdmin(r.Context(), cfg, store, r) {
 			http.Error(w, "administrator access required", http.StatusForbidden)
 			return
 		}

@@ -19,6 +19,9 @@ const DefaultMonthlyTokenQuota = 100_000_000
 
 // Config is the resolved runtime configuration.
 type Config struct {
+	// UserDashboardsEnabled opts into scoped personal and manager views.
+	// It never grants administrative permissions. Disabled by default.
+	UserDashboardsEnabled  bool
 	ManagementAPISecret    string
 	ManagementPublicOrigin string
 
@@ -287,6 +290,7 @@ func Load() Config {
 		EventSource:              envDefault("EVENT_SOURCE", "ai-gateway"),
 		ManagementAPISecret:      os.Getenv("MANAGEMENT_API_SECRET"),
 		ManagementPublicOrigin:   strings.TrimRight(os.Getenv("MANAGEMENT_PUBLIC_ORIGIN"), "/"),
+		UserDashboardsEnabled:    envBool("USER_DASHBOARDS_ENABLED", false),
 		UserHeader:               envDefault("AUTH_USER_HEADER", "X-Forwarded-User"),
 		GroupsHeader:             envDefault("AUTH_GROUPS_HEADER", "X-Forwarded-Groups"),
 		AdminUsers:               envList("ADMIN_USERS"),
