@@ -17,7 +17,7 @@ function updateViewLinks(){const login=el('onboard').elements.subject.value;el('
 el('onboard').elements.subject.addEventListener('change', () => {issuedKey.clear();updateViewLinks();});
 bind('onboard', async body => {
  issuedKey.clear(); const select=el('onboard').elements.subject;select.disabled=true;
- try {issuedKey.set(await api('/api/v1/management/keys', 'POST', body));}
+ try {issuedKey.set(await api('/api/v1/management/keys', 'POST', body), {subject: body.subject, name: body.name});}
  finally {select.disabled=false;}
 });
 el('revokeUserKeys').elements.subject.addEventListener('change',()=>{el('userKeyCount').textContent='';});

@@ -35,3 +35,22 @@ test('copy is explicit and clipboard denial leaves download available',async()=>
  const denied=controls({navigator:{clipboard:{writeText:async()=>{throw new Error('denied');}}}}).delivery(panel);
  denied.set({id:'fixture-id',key:'fixture-key-only'});await assert.rejects(denied.copy(),/Use Download/);assert.equal(panel.hidden,false);assert.equal(denied.value(),'fixture-key-only');
 });
+
+test('downloads use sanitized issuance names, keep key content unchanged, and reset metadata',async()=>{
+ let link,blob;
+ const c=controls({document:{createElement:()=>link={click(){},remove(){}},body:{append(){}}},
+  URL:{createObjectURL:value=>{blob=value;return 'blob:fixture';},revokeObjectURL(){}},setTimeout:fn=>fn()});
+ const panel={dataset:{},hidden:false,querySelectorAll:()=>[]};const d=c.delivery(panel);
+ const metadata={subject:'alice',name:'My laptop'};
+ d.set({id:'123',key:'fixture-secret'},metadata);metadata.name='changed-after-issue';d.download();
+ assert.equal(link.download,'alice-My-laptop-pricetag.key');assert.equal(await blob.text(),'fixture-secret\n');
+ assert.equal(JSON.stringify(panel).includes('fixture-secret'),false);
+ for(const [meta,expected] of [
+  [{subject:'../../bob',name:'../evil\\key\r\n'},'bob-evil-key-pricetag.key'],
+  [{name:'CON'},'CON-pricetag.key'],[{},'pricetag.key'],
+  [{subject:'...',name:'/'},'pricetag.key'],[{name:'工作'},'pricetag.key']]){
+  d.set({key:'fixture-secret'},meta);d.download();assert.equal(link.download,expected);
+ }
+ d.set({key:'fixture-secret'},{subject:'a'.repeat(100),name:'b'.repeat(100)});d.download();assert.ok(link.download.length<150);
+ d.clear();assert.throws(()=>d.download());d.set({key:'next-fixture'});d.download();assert.equal(link.download,'pricetag.key');
+});

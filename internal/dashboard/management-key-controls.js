@@ -35,10 +35,15 @@ const KeyControls = (() => {
     }
     return parts.join(' ') + ' remaining';
   }
+  function filename(metadata = {}) {
+    const parts = [metadata.subject, metadata.name].map(value => typeof value === 'string'
+      ? value.normalize('NFKC').replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) : '').filter(Boolean);
+    return parts.length ? parts.join('-') + '-pricetag.key' : 'pricetag.key';
+  }
   function delivery(panel) {
-    let secret = '';
+    let secret = '', downloadName = 'pricetag.key';
     function clear() {
-      secret = ''; panel.hidden = true; delete panel.dataset.keyId;
+      secret = ''; downloadName = 'pricetag.key'; panel.hidden = true; delete panel.dataset.keyId;
       panel.querySelectorAll('button').forEach(button => button.disabled = true);
     }
     clear();
@@ -46,11 +51,12 @@ const KeyControls = (() => {
       clear,
       // Only callers responsible for clipboard/download receive this value.
       value: () => secret,
-      set(result) {
+      set(result, metadata = {}) {
         clear();
         if (typeof result.key !== 'string' || !result.key.trim() || /\s/.test(result.key)) {
           throw new Error('The key service returned no usable key. Check your key list before issuing another.');
         }
+        downloadName = filename(metadata);
         secret = result.key; panel.dataset.keyId = typeof result.id === 'string' ? result.id : ''; panel.hidden = false;
         panel.querySelectorAll('button').forEach(button => button.disabled = false);
       },
@@ -62,7 +68,7 @@ const KeyControls = (() => {
       download() {
         if (!secret) throw new Error('No new key to download.');
         const url = URL.createObjectURL(new Blob([secret + '\n'], {type: 'text/plain'}));
-        const link = document.createElement('a'); link.href = url; link.download = 'pricetag.key';
+        const link = document.createElement('a'); link.href = url; link.download = downloadName;
         try { document.body.append(link); link.click(); }
         finally { link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
       }

@@ -76,13 +76,14 @@ const values=form=>Object.fromEntries(new FormData(form));
 function report(fn){return async event=>{if(event)event.preventDefault();el('status').textContent='Working…';try{await fn();el('status').textContent='Done';}catch(e){el('status').textContent=e.message;}};}
 function bind(id,fn){el(id).addEventListener('submit',KeyControls.singleFlight(el(id), report(()=>fn(values(el(id))))));}
 const issuedKey = KeyControls.delivery(el('newKey'));
+let keyOwner = '';
 for (const [selector, action] of [['[data-key-copy]', () => issuedKey.copy()], ['[data-key-download]', () => issuedKey.download()], ['[data-key-clear]', () => issuedKey.clear()]]) {
  el('newKey').querySelector(selector).onclick = report(action);
 }
 window.addEventListener('pagehide', () => issuedKey.clear());
 bind('key', async body => {
  issuedKey.clear();
- issuedKey.set(await api('/me/keys', 'POST', body));
+ issuedKey.set(await api('/me/keys', 'POST', body), {subject: keyOwner, name: body.name});
  await loadKeys();
 });
 let keyRows = [];
@@ -132,5 +133,5 @@ async function loadKeys(kind = 'active') {
 el('listKeys').onclick = report(async()=>{await loadKeys();if(el('inactiveKeys').open)await loadKeys('inactive');});
 el('inactiveKeys').addEventListener('toggle', report(async()=>{if(el('inactiveKeys').open)await loadKeys('inactive');}));
 setInterval(refreshKeyTimes, 1000);
-report(async()=>{const who=await api('/api/v1/whoami');el('identity').textContent='Signed in as '+who.user;el('nav-user').textContent=who.user;el('tab-team').hidden=!who.isManager;el('tab-admin').hidden=!who.isSuperAdmin;if(who.impersonating){el('key').hidden=true;el('listKeys').hidden=true;}else{await loadKeys();}})();
+report(async()=>{const who=await api('/api/v1/whoami');keyOwner=who.user;el('identity').textContent='Signed in as '+who.user;el('nav-user').textContent=who.user;el('tab-team').hidden=!who.isManager;el('tab-admin').hidden=!who.isSuperAdmin;if(who.impersonating){el('key').hidden=true;el('listKeys').hidden=true;}else{await loadKeys();}})();
 </script></html>
