@@ -219,7 +219,9 @@ func (h *AdminHandler) ServeAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.cfg.ManagementAPISecret != "" {
+		data = []byte(strings.ReplaceAll(string(data), "data-managed hidden", "data-managed"))
 		for marker, file := range map[string]string{
+			"MANAGED_KEYS":    "management-admin-keys.html",
 			"MANAGED_USERS":   "management-admin-users.html",
 			"MANAGED_BUDGETS": "management-admin-budgets.html",
 			"MANAGED_PRICES":  "management-admin-prices.html",

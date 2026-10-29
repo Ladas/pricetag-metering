@@ -7,7 +7,7 @@ async function api(path,method='GET',body){const r=await fetch(path,{method,cred
 const values=form=>Object.fromEntries(new FormData(form));
 function report(fn){return async event=>{if(event)event.preventDefault();el('status').textContent='Working…';try{await fn();el('status').textContent='Done';showToast('Saved','success');}catch(e){el('status').textContent=e.message;showToast(e.message,'error');}};}
 function bind(id,fn){el(id).addEventListener('submit',KeyControls.singleFlight(el(id), report(()=>fn(values(el(id))))));}
-bind('user',async body=>{await api('/api/v1/management/users','PUT',{...body,active:body.active==='true'});await loadUsers();loadPartnerUsers();});
+bind('user',async body=>{await api('/api/v1/management/users','PUT',{...body,active:body.active==='true'});await loadUsers();loadPartnerUsers(0);});
 const issuedKey = KeyControls.delivery(el('onboardKey'));
 for (const [selector, action] of [['[data-key-copy]', () => issuedKey.copy()], ['[data-key-download]', () => issuedKey.download()], ['[data-key-clear]', () => issuedKey.clear()]]) {
  el('onboardKey').querySelector(selector).onclick = report(action);
@@ -20,17 +20,43 @@ bind('onboard', async body => {
  try {issuedKey.set(await api('/api/v1/management/keys', 'POST', body), {subject: body.subject, name: body.name});}
  finally {select.disabled=false;}
 });
-el('revokeUserKeys').elements.subject.addEventListener('change',()=>{el('userKeyCount').textContent='';});
-el('countUserKeys').onclick=report(async()=>{
- const subject=el('revokeUserKeys').elements.subject.value;
- const result=await api('/api/v1/management/key-revocations','POST',{subject,dry_run:true});
- if(el('revokeUserKeys').elements.subject.value===subject)el('userKeyCount').textContent=result.count+' active keys (checked now).';
-});
-bind('revokeUserKeys',async body=>{
- if(!window.confirm('Revoke every active key for '+body.subject+'? Their harnesses will lose access.'))return;
- const result=await api('/api/v1/management/key-revocations','POST',{subject:body.subject,dry_run:false});
- el('userKeyCount').textContent=result.count+' keys revoked. Keys created afterward remain valid.';
-});
+window.editManagedUser=index=>{
+ const user=partnerUsersAll[index],login=user&&(user.logins||[])[0];
+ if(!login){showToast('This identity has no managed login.','error');return;}
+ const form=el('user');form.elements.subject.value=login;form.elements.subject.readOnly=true;
+ form.elements.name.value=(user.tags||{}).first_name||login;
+ form.elements.active.value=String(user.active);form.scrollIntoView({block:'center'});form.elements.name.focus();
+};
+el('newUser').onclick=()=>{const form=el('user');form.reset();form.elements.subject.readOnly=false;form.elements.subject.focus();};
+window.loadManagedUserKeys=async user=>{
+ const login=(user.logins||[])[0],section=document.createElement('section');section.className='managed-controls';
+ const heading=document.createElement('h3');heading.textContent='Active keys';section.append(heading);
+ const content=document.createElement('div');content.textContent='Loading active keys…';section.append(content);el('partner-detail-body').append(section);
+ const note=document.createElement('p');note.textContent='Revoking keys disconnects harnesses. Existing browser sessions remain valid; set the user inactive to block all access.';section.append(note);
+ const revoke=document.createElement('button');revoke.type='button';revoke.className='btn btn-red';revoke.textContent='Revoke all keys';revoke.disabled=true;section.append(revoke);
+ async function refresh(){
+  revoke.disabled=true;
+  try{
+   const result=await api('/api/v1/admin/partner-users/'+encodeURIComponent(user.user_id)+'/keys');
+   if(!section.isConnected)return;
+   const keys=(result.keys||[]).filter(key=>KeyControls.state(key)==='active');
+   heading.textContent='Active keys ('+keys.length+')';content.replaceChildren();
+   const table=document.createElement('table');table.className='tbl';
+   const head=document.createElement('tr');for(const label of ['Name','Login','Expires']){const cell=document.createElement('th');cell.textContent=label;head.append(cell);}table.append(head);
+   for(const key of keys){const row=document.createElement('tr');for(const value of [key.name||key.id,key.username,KeyControls.remaining(key)]){const cell=document.createElement('td');cell.textContent=value||'—';row.append(cell);}table.append(row);}
+   if(keys.length)content.append(table);else content.textContent='No active keys.';
+   revoke.disabled=!login||!keys.length;
+  }catch(error){if(section.isConnected)content.textContent=error.message;}
+ }
+ revoke.onclick=async()=>{
+  if(revoke.disabled)return;
+  if(!window.confirm('Revoke every active key for '+login+'? Their harnesses will lose access.'))return;
+  revoke.disabled=true;
+  try{await api('/api/v1/management/key-revocations','POST',{subject:login,dry_run:false});await refresh();}
+  catch(error){content.textContent=error.message+' Revocation may be partial; retry safely.';revoke.disabled=false;}
+ };
+ await refresh();
+};
 bind('budget',async body=>{await api('/api/v1/management/budgets','PUT',{subject:body.subject,monthly_usd:Number(body.monthly_usd)});await updateBudgetViews();});
 el('removeBudget').onclick=report(async()=>{await api('/api/v1/management/budgets','DELETE',{subject:el('budget').elements.subject.value});await updateBudgetViews();});
 bind('price',async body=>{if(body.source_model){for(const k of ['input_cost_per_mtok','output_cost_per_mtok','cache_write_cost_per_mtok','cache_read_cost_per_mtok'])delete body[k];}else{delete body.source_model;for(const k of ['input_cost_per_mtok','output_cost_per_mtok','cache_write_cost_per_mtok','cache_read_cost_per_mtok'])body[k]=Number(body[k]);}await api('/api/v1/management/prices','PUT',body);await loadPrices();});
@@ -91,13 +117,17 @@ bind('budgetSearch',async()=>{budgetOffset=0;await listBudgets();});
 
 async function loadUsers(){
  const users=await api('/api/v1/management/users');
- for(const select of [el('budget').elements.subject,el('onboard').elements.subject,el('revokeUserKeys').elements.subject]){
+ for(const select of [el('budget').elements.subject,el('onboard').elements.subject]){
   if(select.disabled)continue;
   const previous=select.value;select.replaceChildren();
-  for(const user of users){const login=(user.logins||[])[0];if(!login)continue;const opt=document.createElement('option');opt.value=login;opt.textContent=(user.tags.first_name||login)+' ('+login+')';select.append(opt);}
+  for(const user of users){if(select===el('onboard').elements.subject&&!user.active)continue;const login=(user.logins||[])[0];if(!login)continue;const opt=document.createElement('option');opt.value=login;opt.textContent=(user.tags.first_name||login)+' ('+login+')';select.append(opt);}
   if([...select.options].some(o=>o.value===previous))select.value=previous;
  }
 }
+window.refreshManagedPrices=report(loadPrices);
+window.refreshManagedBudgets=report(updateBudgetViews);
+window.refreshManagedUsers=report(loadUsers);
+if(activeTab==='model-pricing')window.refreshManagedPrices();
 loadUsers().then(()=>{updateViewLinks();return loadSelectedBudget();}).catch(error => {el('status').textContent=error.message;showToast(error.message,'error');});
 })();
 </script>

@@ -76,3 +76,26 @@ func TestPartnerUserResourceAllowHeaderIncludesPatch(t *testing.T) {
 		t.Fatalf("Allow = %q, want %q", got, want)
 	}
 }
+
+func TestAdminUserPageRejectsInvalidStateBeforeStorage(t *testing.T) {
+	h := NewPartnerUsersHandler(nil, nil, "")
+	w := httptest.NewRecorder()
+	h.HandleAdminUsers(w, httptest.NewRequest("GET", "/api/v1/admin/partner-users?state=invalid", nil))
+	if w.Code != 400 {
+		t.Fatalf("status=%d", w.Code)
+	}
+}
+
+func TestAdminUserKeysReadOnlyAndConfiguredGroup(t *testing.T) {
+	h := NewPartnerUsersHandler(nil, nil, "")
+	for _, tc := range []struct {
+		method string
+		code   int
+	}{{"GET", 503}, {"POST", 405}, {"DELETE", 405}} {
+		w := httptest.NewRecorder()
+		h.HandleAdminAccess(w, httptest.NewRequest(tc.method, "/api/v1/admin/partner-users/123e4567-e89b-12d3-a456-426614174000/keys", nil))
+		if w.Code != tc.code {
+			t.Fatalf("%s: status=%d", tc.method, w.Code)
+		}
+	}
+}

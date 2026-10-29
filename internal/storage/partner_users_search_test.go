@@ -90,3 +90,30 @@ func TestListPartnerUsersPageSearchAndPaging(t *testing.T) {
 		t.Fatalf("oversized limit should be clamped, got err %v", err)
 	}
 }
+
+func TestAdminUserPageStatesAndLoginSearch(t *testing.T) {
+	s, ctx := openTestStore(t)
+	active, inactive := true, false
+	for _, p := range []LoginProvision{
+		{Subject: "login-active", Name: "Visible", Active: &active},
+		{Subject: "login-inactive", Name: "Suspended", Active: &inactive},
+	} {
+		if _, err := s.ProvisionLogin(ctx, "test-admin", p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		state, search string
+		want          int
+	}{
+		{"all", "login-", 2}, {"active", "login-", 1}, {"inactive", "login-", 1}, {"all", "LOGIN-INACTIVE", 1}, {"active", "LOGIN-INACTIVE", 0},
+	} {
+		rows, total, _, err := s.ListPartnerUsersPageByState(ctx, tc.search, tc.state, 5, 0)
+		if err != nil || total != tc.want || len(rows) != tc.want {
+			t.Fatalf("%+v: rows=%d total=%d error=%v", tc, len(rows), total, err)
+		}
+	}
+	if _, _, _, err := s.ListPartnerUsersPageByState(ctx, "", "invalid", 5, 0); err == nil {
+		t.Fatal("invalid state accepted")
+	}
+}
