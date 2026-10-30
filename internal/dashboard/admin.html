@@ -616,8 +616,8 @@ td .tag{white-space:nowrap}
 
 <!-- ============ TAB: Users ============ -->
 <div class="tab-panel" id="tab-people">
-<!-- MANAGED_USERS -->
 <div class="card">
+<!-- MANAGED_USERS -->
   <div class="card-hdr"><div><span class="card-title">Users</span><span class="card-count" id="partner-users-count"></span></div><button class="btn btn-outline" style="padding:5px 12px;font-size:10px" onclick="loadPartnerUsers()">Refresh</button></div>
   <div class="ts" style="margin-bottom:10px">Select a user for details and active keys. Edit uses the existing login; role and manager changes require a super-admin.</div>
   <div class="partner-users-toolbar" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
@@ -645,14 +645,10 @@ td .tag{white-space:nowrap}
   </section>
 </div>
 
-
-
-</div>
-
 <div class="tab-panel" id="tab-user-quota"><div class="card"><!-- MANAGED_BUDGETS --></div></div>
 <div class="tab-panel" id="tab-model-pricing"><div class="card"><!-- MANAGED_PRICES --></div></div>
 <div class="tab-panel" id="tab-user-keys"><div class="card"><!-- MANAGED_KEYS --></div></div>
-<p role="status" id="status" style="margin:12px 40px;color:var(--t2)"></p>
+<p role="status" id="status" hidden></p>
 <!-- ============ TAB: Safety Net ============ -->
 <div class="tab-panel" id="tab-safety-net">
   <div class="card">

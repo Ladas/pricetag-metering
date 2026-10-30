@@ -60,3 +60,12 @@ test('editable tabs do not auto-refresh away unsaved input and disabled features
  assert.ok(html.includes("['people','safety-net','user-keys','user-quota','model-pricing','pricing-discounts'].includes(activeTab)"));
  assert.ok(html.includes('.vtab[hidden]{display:none}'));
 });
+
+test('admin editors share card headers, tables remain expanded and status is not printed',()=>{
+ assert.ok(html.includes('<p role="status" id="status" hidden>'));
+ assert.ok(html.indexOf('<div class="card">\n<!-- MANAGED_USERS -->')>=0);
+ const budgets=dashboard('management-admin-budgets.html'),prices=dashboard('management-admin-prices.html');
+ assert.ok(!budgets.includes('<details'));
+ assert.ok(!prices.includes('<details'));
+ for(const content of [budgets,prices,dashboard('management-admin-users.html')])assert.ok(content.includes('class="card-hdr"'));
+});

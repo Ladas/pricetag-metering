@@ -1,5 +1,10 @@
 <style>
-.managed-controls section{margin:18px 0;padding:18px 0;border-top:1px solid var(--bdr)}
+.managed-controls section{margin:0;padding:0}
+.managed-controls .managed-table{margin-top:24px;padding-top:20px;border-top:1px solid var(--bdr)}
+.managed-editor{padding-bottom:20px;margin-bottom:20px;border-bottom:1px solid var(--bdr)}
+.managed-controls .card-title{font-size:14px}
+#budgetSearch label,#priceSearch label{flex:1}
+#budgetSearch .tbl-input,#priceSearch .tbl-input{width:100%}
 .managed-controls h2{font-size:14px;margin-bottom:10px}
 .managed-controls a{color:var(--blu);text-decoration:none}.managed-controls a:hover{text-decoration:underline}
 .managed-controls p{color:var(--t2);margin:8px 0}
@@ -9,9 +14,9 @@
 .managed-controls select.tbl-input{width:260px}
 .managed-controls .btn{min-height:34px}
 .managed-controls pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto}
-</style><div class="managed-controls" id="admin">
+</style><div class="managed-controls managed-editor" id="admin">
 <section>
-<h2>Create or update a user</h2><form id="user">
+<div class="card-hdr"><h2 class="card-title">Create or update a user</h2></div><form id="user">
   <label>Login <input class="tbl-input" name="subject" required></label>
   <label>Name <input class="tbl-input" name="name" required></label>
   <label>State <select class="tbl-input" name="active"><option value="true">Active</option><option value="false">Inactive</option></select></label><button class="btn btn-grn">Save user</button><button class="btn btn-outline" type="button" id="newUser">New user</button></form>

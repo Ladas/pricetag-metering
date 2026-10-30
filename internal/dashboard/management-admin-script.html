@@ -95,7 +95,7 @@ async function loadSelectedBudget(){
  el('budgetCurrent').textContent=override?'Current override: $'+Number(override.monthly_usd).toFixed(2)+' per month.':'Inherits global default: $'+Number(result.default_monthly_usd).toFixed(2)+' per month.';
  el('removeBudget').disabled=!override;el('budget').elements.monthly_usd.disabled=false;el('budget').querySelector('button').disabled=false;
 }
-async function updateBudgetViews(){await loadSelectedBudget();if(el('budgetDetails').open)await listBudgets();}
+async function updateBudgetViews(){await loadSelectedBudget();await listBudgets();}
 async function listBudgets(){
  const result=await api('/api/v1/management/budgets?offset='+budgetOffset+'&search='+encodeURIComponent(el('budgetSearch').elements.search.value));
  const table=document.createElement('table');table.className='tbl';
@@ -112,7 +112,6 @@ async function listBudgets(){
 }
 el('budget').elements.subject.addEventListener('change',report(loadSelectedBudget));
 el('listBudgets').onclick=report(listBudgets);
-el('budgetDetails').addEventListener('toggle',report(async()=>{if(el('budgetDetails').open)await listBudgets();}));
 bind('budgetSearch',async()=>{budgetOffset=0;await listBudgets();});
 
 async function loadUsers(){
@@ -128,6 +127,6 @@ window.refreshManagedPrices=report(loadPrices);
 window.refreshManagedBudgets=report(updateBudgetViews);
 window.refreshManagedUsers=report(loadUsers);
 if(activeTab==='model-pricing')window.refreshManagedPrices();
-loadUsers().then(()=>{updateViewLinks();return loadSelectedBudget();}).catch(error => {el('status').textContent=error.message;showToast(error.message,'error');});
+loadUsers().then(()=>{updateViewLinks();return activeTab==='user-quota'?updateBudgetViews():loadSelectedBudget();}).catch(error => {el('status').textContent=error.message;showToast(error.message,'error');});
 })();
 </script>
