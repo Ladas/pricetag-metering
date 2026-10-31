@@ -78,3 +78,20 @@ test('personal page uses cards and a searchable status-filtered table without re
  assert.ok(page.includes('class="card-hdr"'));assert.ok(page.includes('class="card-title"'));
  assert.ok(page.includes('Key management is unavailable while viewing as another user.'));
 });
+
+
+test('My keys sits immediately before Admin on every shared navigation bar',()=>{
+ for(const name of ['management.html','admin.html','dashboard.html','manager.html']){
+  const nav=dashboard(name).match(/<nav>[\s\S]*?<\/nav>/)[0];
+  assert.match(nav, /href="\/management"[^>]*>My keys<\/a>\s*<a href="\/admin"/);
+ }
+});
+
+test('personal key workspace has consistently named list and creation tabs',()=>{
+ const page=dashboard('management.html');
+ assert.ok(!page.includes('Your keys'));assert.ok(!page.includes('Create a key</h2>'));
+ for(const id of ['vtab-my-keys','vtab-create-key','tab-my-keys','tab-create-key'])assert.ok(page.includes('id="'+id+'"'));
+ assert.match(page, /role="tablist"/);
+ assert.match(page, /id="vtab-my-keys"[^>]*aria-selected="true"/);
+ assert.match(page, /id="tab-create-key"[^>]*hidden/);
+});

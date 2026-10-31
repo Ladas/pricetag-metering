@@ -58,6 +58,10 @@ body{background:var(--bg);color:var(--t);font-family:Inter,-apple-system,BlinkMa
 .ab-out{color:var(--red,#e8554e);border:1px solid var(--bdr,#232b3b);border-radius:7px;padding:4px 11px;font-size:13px;text-decoration:none}
 .ab-out:hover{border-color:var(--red,#e8554e)}
 .pg{max-width:1800px;margin:auto;padding:20px 40px}
+.vtabs{display:flex;align-items:center;gap:4px;border-bottom:1px solid var(--bdr);margin-bottom:24px;position:sticky;top:0;z-index:100;background:var(--bg);padding-top:6px}
+.vtab{background:none;border:none;border-bottom:2px solid transparent;color:var(--t2);padding:10px 20px;font-size:12px;font-weight:700;letter-spacing:.3px;cursor:pointer;font-family:inherit;transition:color .15s;display:inline-flex;align-items:center;gap:7px}
+.vtab:hover{color:var(--t)}.vtab.on{color:var(--blu);border-bottom-color:var(--blu)}
+.vtab:focus-visible{outline:2px solid var(--blu);outline-offset:-2px}
 .card{background:var(--c1);border:1px solid var(--bdr);border-radius:10px;padding:20px;margin-bottom:24px}
 .card-hdr{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--bdr)}
 .card-title{font-size:15px;font-weight:700;color:var(--t)}.page-title{font-size:18px;font-weight:700}
@@ -74,28 +78,52 @@ td{padding:8px 12px;border-bottom:1px solid var(--bdr);overflow-wrap:anywhere}tb
 </style>
 <div class="pg"><header class="appbar">
 <a class="logo" href="/dashboard">Price<em>Tag</em></a>
-<nav><a href="/management" class="on">My keys</a><a href="/dashboard">Usage</a><a href="/manager" id="tab-team" hidden>My team</a><a href="/admin" id="tab-admin" hidden>Admin</a></nav>
+<nav><a href="/dashboard">Usage</a><a href="/manager" id="tab-team" hidden>My team</a><a href="/management" class="on" aria-current="page">My keys</a><a href="/admin" id="tab-admin" hidden>Admin</a></nav>
 <div class="ab-right"><span class="ab-user" id="nav-user"></span><a href="/logout" class="ab-out">Sign out</a></div>
 </header>
 <h1 class="page-title">My keys</h1><p id="identity" hidden></p>
 <p id="keyError" role="alert" hidden></p>
 <div id="keyManagement" hidden>
-<section class="card"><div class="card-hdr"><h2 class="card-title">Create a key</h2></div>
-<p>Create a key for a device or AI client. Existing keys remain active until they expire or you revoke them.</p>
-<form id="key"><label>Name <input class="tbl-input" name="name" required maxlength="128"></label><label>Lifetime <input class="tbl-input" name="expiresIn" value="30d" required></label><button class="btn btn-grn">Create key</button></form>
-<div id="newKey" hidden><p>Key created. Copy or download it now; it cannot be retrieved later. Keep the file private.</p><button type="button" class="btn btn-outline" data-key-copy>Copy key</button> <button type="button" class="btn btn-outline" data-key-download>Download .key</button> <button type="button" class="btn btn-outline" data-key-clear>Dismiss key</button></div></section>
-<section class="card"><div class="card-hdr"><h2 class="card-title">Your keys</h2><button type="button" class="btn btn-outline" id="refreshKeys">Refresh</button></div>
+<div class="vtabs" role="tablist" aria-label="My keys">
+<button type="button" class="vtab on" id="vtab-my-keys" role="tab" aria-controls="tab-my-keys" aria-selected="true">My keys</button>
+<button type="button" class="vtab" id="vtab-create-key" role="tab" aria-controls="tab-create-key" aria-selected="false" tabindex="-1">Create key</button>
+</div>
+<section class="card" id="tab-my-keys" role="tabpanel" aria-labelledby="vtab-my-keys"><div class="card-hdr"><h2 class="card-title">My keys</h2><button type="button" class="btn btn-outline" id="refreshKeys">Refresh</button></div>
 <form id="keySearch"><label>Search name or key ID <input class="tbl-input" name="search" maxlength="128" type="search"></label>
 <label>Status <select class="tbl-input" id="keyState"><option value="active">Active</option><option value="revoked">Revoked</option><option value="expired">Expired</option><option value="all">All</option></select></label>
 <label>Rows <select class="tbl-input" id="keyPageSize"><option value="5">5</option><option value="20">20</option><option value="50">50</option></select></label><button class="btn btn-outline">Search</button></form>
 <div class="tbl-wrap" id="keys" aria-busy="false"></div><div class="partner-users-pager" id="keyPages" aria-label="Key pages"></div>
 <p>Revoked and expired keys remain in the list for audit. Use the status filter to review them.</p></section>
+<section class="card" id="tab-create-key" role="tabpanel" aria-labelledby="vtab-create-key" hidden><div class="card-hdr"><h2 class="card-title">Create key</h2></div>
+<p>Create a key for a device or AI client. Existing keys remain active until they expire or you revoke them.</p>
+<form id="key"><label>Name <input class="tbl-input" name="name" required maxlength="128"></label><label>Lifetime <input class="tbl-input" name="expiresIn" value="30d" required></label><button class="btn btn-grn">Create key</button></form>
+<div id="newKey" hidden><p>Key created. Copy or download it now; it cannot be retrieved later. Keep the file private.</p><button type="button" class="btn btn-outline" data-key-copy>Copy key</button> <button type="button" class="btn btn-outline" data-key-download>Download .key</button> <button type="button" class="btn btn-outline" data-key-clear>Dismiss key</button></div></section>
 </div><p role="status" id="status" hidden></p>
 </div>
 <script>
 'use strict';
 /* KEY_CONTROLS */
 const el=id=>document.getElementById(id);
+const keyTabs=['my-keys','create-key'];
+function showKeyTab(name) {
+ if(!keyTabs.includes(name))return;
+ for(const tab of keyTabs){
+  const selected=tab===name,button=el('vtab-'+tab);
+  button.classList.toggle('on',selected);button.setAttribute('aria-selected',String(selected));button.tabIndex=selected?0:-1;
+  el('tab-'+tab).hidden=!selected;
+ }
+}
+for(const [index,name] of keyTabs.entries()){
+ const button=el('vtab-'+name);
+ button.onclick=()=>showKeyTab(name);
+ button.onkeydown=event=>{
+  const next=event.key==='Home'?0:event.key==='End'?keyTabs.length-1:
+   event.key==='ArrowRight'?(index+1)%keyTabs.length:event.key==='ArrowLeft'?(index+keyTabs.length-1)%keyTabs.length:null;
+  if(next===null)return;
+  event.preventDefault();showKeyTab(keyTabs[next]);el('vtab-'+keyTabs[next]).focus();
+ };
+}
+
 async function api(path,method='GET',body){const r=await fetch(path,{method,credentials:'same-origin',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,cache:'no-store'});if(!r.ok)throw new Error('Request failed: HTTP '+r.status);const text=await r.text();return text?JSON.parse(text):{};}
 const values=form=>Object.fromEntries(new FormData(form));
 function report(fn){return async event=>{if(event)event.preventDefault();el('status').textContent='Working…';el('keyError').hidden=true;try{await fn();el('status').textContent='Done';}catch(e){el('status').textContent=e.message;el('keyError').textContent=e.message;el('keyError').hidden=false;}};}

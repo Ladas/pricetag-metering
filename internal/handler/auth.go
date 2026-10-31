@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -299,8 +298,7 @@ func (h *AuthHandler) confirmSessionChange(w http.ResponseWriter, r *http.Reques
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method == http.MethodGet {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprintf(w, `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>%s</title><h1>%s</h1><form method="post" action="%s"><button type="submit">Continue</button></form><p><a href="/dashboard">Cancel</a></p></html>`, html.EscapeString(title), html.EscapeString(title), html.EscapeString(r.URL.RequestURI()))
+		renderSessionConfirmation(w, r, title)
 		return false
 	}
 	if r.Method != http.MethodPost {

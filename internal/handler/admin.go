@@ -248,6 +248,9 @@ func (h *AdminHandler) ServeAdmin(w http.ResponseWriter, r *http.Request) {
 			data = []byte(strings.Replace(string(data), "<!-- "+marker+" -->", string(fragment), 1))
 		}
 	}
+	if h.cfg.ManagementAPISecret != "" {
+		data = dashboard.WithSessionDialog(data)
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Write(data)
@@ -258,6 +261,9 @@ func (h *AdminHandler) ServeRouting(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "routing page not found", http.StatusInternalServerError)
 		return
+	}
+	if h.cfg.ManagementAPISecret != "" {
+		data = dashboard.WithSessionDialog(data)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")

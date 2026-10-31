@@ -14,11 +14,15 @@ const tick=()=>new Promise(r=>setTimeout(r,0));
   const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
   let keys=Array.from({length:53},(_,i)=>({id:'key-'+i,name:'Client '+String(i).padStart(2,'0'),status:'active',expirationDate:'2099-01-01T00:00:00Z'}));
   keys.push({id:'revoked',name:'Old laptop',status:'revoked'}, {id:'expired',name:'Expired laptop',status:'active',expirationDate:'2000-01-01T00:00:00Z'}, {id:'html',name:'<img src=x onerror=alert(1)>',status:'revoked'});
-  let fail=false,blocked=false,requests=0,listRequests=0,release,delay=false;
+  let fail=false,blocked=false,requests=0,listRequests=0,release,delay=false,keyServiceEnabled=true;
   await page.route('https://fixture.invalid/**',async route=>{
    const url=new URL(route.request().url());
    if(url.pathname==='/management')return route.fulfill({contentType:'text/html',body:personal});
-   if(url.pathname==='/api/v1/whoami')return route.fulfill({json:{user:'alice',display_name:'Alice',keyServiceEnabled:true,impersonating:blocked}});
+   if(url.pathname==='/api/v1/whoami')return route.fulfill({json:{user:'alice',display_name:'Alice',keyServiceEnabled,impersonating:blocked}});
+   if(url.pathname==='/me/keys'&&route.request().method()==='POST'){
+    const input=route.request().postDataJSON();keys.push({id:'created',name:input.name,status:'active',expirationDate:'2099-01-01T00:00:00Z'});
+    return route.fulfill({json:{id:'created',key:'fixture-only-key'}});
+   }
    if(url.pathname==='/me/keys'&&route.request().method()==='GET'){
     listRequests++;assert.deepEqual([...url.searchParams.keys()],['offset']);
     const offset=Number(url.searchParams.get('offset'));const snapshot={data:keys.slice(offset,offset+50),has_more:offset+50<keys.length};
@@ -35,6 +39,17 @@ const tick=()=>new Promise(r=>setTimeout(r,0));
   assert.equal(await page.getByText('List my keys',{exact:true}).count(),0);
   assert.equal(await page.getByText('Signed in as alice',{exact:true}).count(),0);
   assert.equal(await page.locator('#keys tbody tr').count(),5);assert.equal(listRequests,2);checks++;
+  // Default list tab, accessible keyboard navigation and preserved creation draft.
+  assert.equal(await page.getByRole('tab',{name:'My keys',exact:true}).getAttribute('aria-selected'),'true');
+  assert.equal(await page.locator('#key').isVisible(),false);
+  await page.getByRole('tab',{name:'My keys',exact:true}).focus();await page.keyboard.press('ArrowRight');
+  assert.equal(await page.getByRole('tab',{name:'Create key',exact:true}).getAttribute('aria-selected'),'true');
+  assert.equal(await page.locator('#keys').isVisible(),false);
+  await page.locator('#key [name=name]').fill('New device');
+  await page.getByRole('tab',{name:'Create key',exact:true}).focus();await page.keyboard.press('Home');
+  assert.equal(await page.locator('#keys').isVisible(),true);
+  await page.keyboard.press('End');assert.equal(await page.locator('#key [name=name]').inputValue(),'New device');
+  await page.keyboard.press('ArrowRight');assert.equal(await page.locator('#keys').isVisible(),true);checks++;
   await page.getByRole('button',{name:'Next',exact:true}).click();assert.match(await page.locator('#keyPages').textContent(),/Page 2 of 11/);
   await page.locator('#keySearch input').fill('client 52');await page.getByText('Client 52',{exact:true}).waitFor();
   assert.match(await page.locator('#keyPages').textContent(),/Page 1 of 1 · 1 results/);checks++;
@@ -60,14 +75,32 @@ const tick=()=>new Promise(r=>setTimeout(r,0));
   while(!release)await tick();keys.push({id:'newest',name:'Newest',status:'active'});
   await page.evaluate(()=>loadKeys());release();await older;
   await page.locator('#keyState').selectOption('active');await page.locator('#keySearch input').fill('Newest');await page.getByText('Newest',{exact:true}).waitFor();checks++;
+  // Issuance stays in Create key so delivery remains available; the list is refreshed.
+  await page.getByRole('tab',{name:'Create key',exact:true}).click();
+  await page.getByRole('button',{name:'Create key',exact:true}).click();await page.locator('#newKey').waitFor();
+  assert.equal(await page.getByRole('tab',{name:'Create key',exact:true}).getAttribute('aria-selected'),'true');
+  assert.equal((await page.content()).includes('fixture-only-key'),false);
+  await page.getByRole('tab',{name:'My keys',exact:true}).click();
+  await page.locator('#keySearch input').fill('New device');await page.locator('#keys').getByText('New device',{exact:true}).waitFor();
+  await page.getByRole('tab',{name:'Create key',exact:true}).click();
+  const downloaded=page.waitForEvent('download');await page.getByRole('button',{name:'Download .key',exact:true}).click();
+  const download=await downloaded;assert.equal(download.suggestedFilename(),'alice-New-device-pricetag.key');await download.delete();
+  await page.getByRole('button',{name:'Dismiss key',exact:true}).click();assert.equal(await page.locator('#newKey').isVisible(),false);checks++;
   blocked=true;const before=listRequests;await page.reload();await page.getByText('Key management is unavailable while viewing as another user.').waitFor();assert.equal(listRequests,before);assert.equal(await page.locator('#keyManagement').isVisible(),false);checks++;
+  blocked=false;keyServiceEnabled=false;const disabledBefore=listRequests;await page.reload();
+  await page.getByText('Key management is not configured.',{exact:true}).waitFor();
+  assert.equal(listRequests,disabledBefore);assert.equal(await page.getByRole('tablist').isVisible(),false);checks++;
+  keyServiceEnabled=true;
   assert.deepEqual(errors,[]);
   // Desktop and narrow layouts use the same navigation/cards as main pages.
   blocked=false;await page.reload();await page.locator('#keyManagement').waitFor();
   await page.screenshot({path:'/tmp/pricetag-my-keys-desktop.png',fullPage:true});
   await page.setViewportSize({width:390,height:844});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
-  await page.screenshot({path:'/tmp/pricetag-my-keys-mobile.png',fullPage:true});checks++;
+  await page.screenshot({path:'/tmp/pricetag-my-keys-mobile.png',fullPage:true});
+  await page.getByRole('tab',{name:'Create key',exact:true}).click();
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
+  await page.screenshot({path:'/tmp/pricetag-create-key-mobile.png',fullPage:true});checks++;
   const admin=await browser.newPage();admin.on('pageerror',e=>errors.push(e.message));
   const fragments=['users','keys','budgets','prices'].map(name=>fs.readFileSync(path.join(dir,'management-admin-'+name+'.html'),'utf8')).join('');
   const script=fs.readFileSync(path.join(dir,'management-admin-script.html'),'utf8').replace('/* KEY_CONTROLS */',controls);
