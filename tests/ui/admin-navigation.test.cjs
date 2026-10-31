@@ -69,3 +69,12 @@ test('admin editors share card headers, tables remain expanded and status is not
  assert.ok(!prices.includes('<details'));
  for(const content of [budgets,prices,dashboard('management-admin-users.html')])assert.ok(content.includes('class="card-hdr"'));
 });
+
+test('personal page uses cards and a searchable status-filtered table without redundant identity text',()=>{
+ const page=dashboard('management.html');
+ assert.ok(!page.includes('List my keys'));assert.ok(!page.includes('Signed in as'));
+ for(const id of ['keySearch','keyState','keyPageSize','keyPages','refreshKeys'])assert.ok(page.includes('id="'+id+'"'));
+ for(const status of ['active','revoked','expired','all'])assert.ok(page.includes('value="'+status+'"'));
+ assert.ok(page.includes('class="card-hdr"'));assert.ok(page.includes('class="card-title"'));
+ assert.ok(page.includes('Key management is unavailable while viewing as another user.'));
+});

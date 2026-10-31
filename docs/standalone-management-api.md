@@ -7,3 +7,5 @@ Suspension preserves identity and history but denies entitlement and browser acc
 ## Custom prices
 
 `GET /api/v1/management/prices` lists rates; PUT supplies a model/provider and all four nonnegative finite USD-per-million-token rates, or a source model to snapshot. Price records use billing identities, not automatic gateway routing. Future rate changes preserve historical charges; explicit repricing is separate. Imported-catalog discounts and custom rates are distinct.
+
+The paginated budgets query accepts `limit=5`, `20` or `50` (default `20`), `offset`, literal `search`, and an optional exact `subject`. It returns `data`, `has_more` and `default_monthly_usd`. Invalid or repeated query parameters are rejected.

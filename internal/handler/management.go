@@ -71,7 +71,7 @@ func NewManagementHandler(store *storage.Store, cfg config.Config) http.HandlerF
 			if r.Method == http.MethodGet && r.URL.RawQuery != "" {
 				query := r.URL.Query()
 				for name, values := range query {
-					if (name != "offset" && name != "search" && name != "subject") || len(values) != 1 {
+					if (name != "offset" && name != "search" && name != "subject" && name != "limit") || len(values) != 1 {
 						http.Error(w, "invalid budget query", 400)
 						return
 					}
@@ -89,7 +89,16 @@ func NewManagementHandler(store *storage.Store, cfg config.Config) http.HandlerF
 					http.Error(w, "invalid search", 400)
 					return
 				}
-				rows, more, err := store.UserBudgetOverridesPage(r.Context(), query.Get("search"), query.Get("subject"), 20, offset)
+				limit := 20
+				if raw, ok := query["limit"]; ok {
+					var err error
+					limit, err = strconv.Atoi(raw[0])
+					if err != nil || (limit != 5 && limit != 20 && limit != 50) {
+						http.Error(w, "invalid limit", 400)
+						return
+					}
+				}
+				rows, more, err := store.UserBudgetOverridesPage(r.Context(), query.Get("search"), query.Get("subject"), limit, offset)
 				if err != nil {
 					http.Error(w, "budget query failed", 500)
 					return

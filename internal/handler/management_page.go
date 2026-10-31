@@ -18,6 +18,11 @@ func ServeManagement(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	controls, err := fs.ReadFile(dashboard.FS, "management-key-controls.js")
+	if err == nil {
+		var tables []byte
+		tables, err = fs.ReadFile(dashboard.FS, "management-table-controls.js")
+		controls = append(append(controls, '\n'), tables...)
+	}
 	if err != nil {
 		http.Error(w, "key controls unavailable", 500)
 		return

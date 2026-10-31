@@ -46,7 +46,7 @@ body{background:var(--bg);color:var(--t);font-family:Inter,-apple-system,BlinkMa
 .tbl-input:focus{border-color:var(--blu)}
 .tbl-input::placeholder{color:var(--t2);opacity:.6}
 .appbar{display:flex;align-items:center;gap:16px;padding:11px 18px;background:var(--c1,#141820);border-bottom:1px solid var(--bdr,#232b3b);flex-wrap:wrap;margin:-20px -40px 16px -40px}
-.appbar .logo{font-weight:700;font-size:15px;letter-spacing:.2px;white-space:nowrap;color:var(--t,#e2e6ec);padding-left:4px}
+.appbar .logo{text-decoration:none;font-weight:700;font-size:15px;letter-spacing:.2px;white-space:nowrap;color:var(--t,#e2e6ec);padding-left:4px}
 .appbar .logo em{font-style:normal;color:var(--blu,#4da0f8)}
 .appbar nav{display:flex;gap:2px;flex-wrap:wrap}
 .appbar nav a{padding:5px 11px;border-radius:7px;color:var(--t2,#8090a8);font-size:13px;text-decoration:none}
@@ -57,15 +57,40 @@ body{background:var(--bg);color:var(--t);font-family:Inter,-apple-system,BlinkMa
 .ab-user .role{color:var(--t2,#8090a8);font-weight:400}
 .ab-out{color:var(--red,#e8554e);border:1px solid var(--bdr,#232b3b);border-radius:7px;padding:4px 11px;font-size:13px;text-decoration:none}
 .ab-out:hover{border-color:var(--red,#e8554e)}
-.pg{max-width:1800px;margin:auto;padding:20px 40px}.card{background:var(--c1);border:1px solid var(--bdr);border-radius:10px;padding:20px;margin:20px 0}.page-title{font-size:18px;font-weight:700}h2{font-size:15px;margin-bottom:12px}p{color:var(--t2);margin:10px 0}form{display:flex;flex-wrap:wrap;gap:12px;align-items:end;margin:16px 0}label{display:flex;flex-direction:column;gap:6px;font-size:11px;font-weight:600;color:var(--t2)}.tbl-input{width:240px;min-height:34px}.btn{min-height:34px}pre{white-space:pre-wrap;overflow-wrap:anywhere}#keys p{padding:10px 0;border-bottom:1px solid var(--bdr)}#keys button{margin-left:14px}@media(max-width:600px){.pg{padding:16px}.tbl-input{width:100%}}</style>
+.pg{max-width:1800px;margin:auto;padding:20px 40px}
+.card{background:var(--c1);border:1px solid var(--bdr);border-radius:10px;padding:20px;margin-bottom:24px}
+.card-hdr{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--bdr)}
+.card-title{font-size:15px;font-weight:700;color:var(--t)}.page-title{font-size:18px;font-weight:700}
+p{color:var(--t2);margin:10px 0}form{display:flex;flex-wrap:wrap;gap:12px;align-items:end;margin:16px 0}
+label{display:flex;flex-direction:column;gap:6px;font-size:11px;font-weight:600;color:var(--t2)}
+.tbl-input{width:240px;min-height:34px}.btn{min-height:34px;white-space:nowrap}
+.tbl-wrap{overflow:auto}table{min-width:640px;width:100%;border-collapse:collapse;font-size:12px}
+th{background:var(--c2);color:var(--t2);font-size:10px;text-transform:uppercase;letter-spacing:.6px;padding:8px 12px;text-align:left;white-space:nowrap}
+td{padding:8px 12px;border-bottom:1px solid var(--bdr);overflow-wrap:anywhere}tbody tr:hover{background:var(--c2)}
+.key-id{display:block;color:var(--t2);font-size:11px}.key-status{text-transform:capitalize}
+.partner-users-pager{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:12px;color:var(--t2);font-size:11px;flex-wrap:wrap}
+#keyError{color:var(--red)}[hidden]{display:none!important}
+@media(max-width:600px){.pg{padding:16px}.appbar{margin:-16px -16px 16px}.tbl-input{width:100%}.card{padding:16px}}
+</style>
 <div class="pg"><header class="appbar">
 <a class="logo" href="/dashboard">Price<em>Tag</em></a>
 <nav><a href="/management" class="on">My keys</a><a href="/dashboard">Usage</a><a href="/manager" id="tab-team" hidden>My team</a><a href="/admin" id="tab-admin" hidden>Admin</a></nav>
 <div class="ab-right"><span class="ab-user" id="nav-user"></span><a href="/logout" class="ab-out">Sign out</a></div>
 </header>
-<h1 class="page-title">My keys</h1><p id="identity">Loading identity…</p><p>Create separate keys for your devices or harnesses. Each submission adds a key without rotating existing keys. Copy or download a new key privately; its value is never displayed.</p>
-<section class="card"><h2>Key lifecycle</h2><form id="key"><label>Name <input class="tbl-input" name="name" required maxlength="128"></label><label>Lifetime <input class="tbl-input" name="expiresIn" value="30d" required></label><button class="btn btn-grn">Create key</button></form><button class="btn btn-outline" id="listKeys">List my keys</button><h3>Active keys</h3><div id="keys"></div><div id="activePages"></div><details id="inactiveKeys"><summary>Revoked and expired keys</summary><div id="archivedKeys"></div><div id="inactivePages"></div></details><div id="newKey" hidden><p>Key created. Copy or download it now; it cannot be retrieved later. Keep the file private.</p><button type="button" class="btn btn-outline" data-key-copy>Copy key</button> <button type="button" class="btn btn-outline" data-key-download>Download .key</button> <button type="button" class="btn btn-outline" data-key-clear>Dismiss key</button></div><p>Revoking a key stops its use. Revoked records remain for audit; they are not permanently deleted.</p></section>
-<p role="status" id="status"></p>
+<h1 class="page-title">My keys</h1><p id="identity" hidden></p>
+<p id="keyError" role="alert" hidden></p>
+<div id="keyManagement" hidden>
+<section class="card"><div class="card-hdr"><h2 class="card-title">Create a key</h2></div>
+<p>Create a key for a device or AI client. Existing keys remain active until they expire or you revoke them.</p>
+<form id="key"><label>Name <input class="tbl-input" name="name" required maxlength="128"></label><label>Lifetime <input class="tbl-input" name="expiresIn" value="30d" required></label><button class="btn btn-grn">Create key</button></form>
+<div id="newKey" hidden><p>Key created. Copy or download it now; it cannot be retrieved later. Keep the file private.</p><button type="button" class="btn btn-outline" data-key-copy>Copy key</button> <button type="button" class="btn btn-outline" data-key-download>Download .key</button> <button type="button" class="btn btn-outline" data-key-clear>Dismiss key</button></div></section>
+<section class="card"><div class="card-hdr"><h2 class="card-title">Your keys</h2><button type="button" class="btn btn-outline" id="refreshKeys">Refresh</button></div>
+<form id="keySearch"><label>Search name or key ID <input class="tbl-input" name="search" maxlength="128" type="search"></label>
+<label>Status <select class="tbl-input" id="keyState"><option value="active">Active</option><option value="revoked">Revoked</option><option value="expired">Expired</option><option value="all">All</option></select></label>
+<label>Rows <select class="tbl-input" id="keyPageSize"><option value="5">5</option><option value="20">20</option><option value="50">50</option></select></label><button class="btn btn-outline">Search</button></form>
+<div class="tbl-wrap" id="keys" aria-busy="false"></div><div class="partner-users-pager" id="keyPages" aria-label="Key pages"></div>
+<p>Revoked and expired keys remain in the list for audit. Use the status filter to review them.</p></section>
+</div><p role="status" id="status" hidden></p>
 </div>
 <script>
 'use strict';
@@ -73,7 +98,7 @@ body{background:var(--bg);color:var(--t);font-family:Inter,-apple-system,BlinkMa
 const el=id=>document.getElementById(id);
 async function api(path,method='GET',body){const r=await fetch(path,{method,credentials:'same-origin',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,cache:'no-store'});if(!r.ok)throw new Error('Request failed: HTTP '+r.status);const text=await r.text();return text?JSON.parse(text):{};}
 const values=form=>Object.fromEntries(new FormData(form));
-function report(fn){return async event=>{if(event)event.preventDefault();el('status').textContent='Working…';try{await fn();el('status').textContent='Done';}catch(e){el('status').textContent=e.message;}};}
+function report(fn){return async event=>{if(event)event.preventDefault();el('status').textContent='Working…';el('keyError').hidden=true;try{await fn();el('status').textContent='Done';}catch(e){el('status').textContent=e.message;el('keyError').textContent=e.message;el('keyError').hidden=false;}};}
 function bind(id,fn){el(id).addEventListener('submit',KeyControls.singleFlight(el(id), report(()=>fn(values(el(id))))));}
 const issuedKey = KeyControls.delivery(el('newKey'));
 let keyOwner = '';
@@ -84,54 +109,69 @@ window.addEventListener('pagehide', () => issuedKey.clear());
 bind('key', async body => {
  issuedKey.clear();
  issuedKey.set(await api('/me/keys', 'POST', body), {subject: keyOwner, name: body.name});
- await loadKeys();
+ el('keySearch').elements.search.value='';el('keyState').value='active';keyOffset=0;await loadKeys();
 });
-let keyRows = [];
-function refreshKeyTimes() {
- for (const {key, status, expiry, button, operation} of keyRows) {
-  status.textContent = KeyControls.state(key);
-  const date = KeyControls.expiry(key);
-  expiry.textContent = (date && Number.isFinite(Date.parse(date)) ? new Date(date).toLocaleString() + ' — ' : '') + KeyControls.remaining(key);
-  button.disabled = operation.pending || status.textContent !== 'active';
+let keys = [], keyRows = [], keyOffset = 0, keyGeneration = 0, keySearchTimer, keyStateSnapshot = '';
+function renderKeys() {
+ keyStateSnapshot=keys.map(key=>KeyControls.state(key)).join(',');
+ const filtered = TableControls.filterKeys(keys, el('keySearch').elements.search.value, el('keyState').value);
+ const size = Number(el('keyPageSize').value);
+ const page = TableControls.page(filtered, keyOffset, size); keyOffset = page.offset;
+ const table = document.createElement('table');table.className='tbl';
+ const head = document.createElement('thead'), heading = document.createElement('tr');
+ for (const text of ['Name / key ID','Status','Expires','Action']) {const th=document.createElement('th');th.textContent=text;th.scope='col';heading.append(th);}
+ head.append(heading);table.append(head);const body=document.createElement('tbody');table.append(body);keyRows=[];
+ for (const key of page.rows) {
+  const row=document.createElement('tr');row.dataset.keyId=key.id;
+  const name=document.createElement('td'),title=document.createElement('strong'),id=document.createElement('small');
+  title.textContent=key.name||'Unnamed key';id.textContent=key.id;id.className='key-id';name.append(title,id);row.append(name);
+  const status=document.createElement('td');status.className='key-status';status.textContent=KeyControls.state(key);row.append(status);
+  const expiry=document.createElement('td');expiry.className='key-expiry';row.append(expiry);
+  const action=document.createElement('td');
+  if (KeyControls.state(key)==='active') {
+   const button=document.createElement('button');button.type='button';button.className='btn btn-outline';button.textContent='Revoke';
+   button.onclick=report(async()=>{
+    if(button.disabled||!window.confirm('Revoke this key? Applications using it will lose access.'))return;
+    button.disabled=true;
+    try {await api('/me/keys/'+encodeURIComponent(key.id),'DELETE');key.status='revoked';renderKeys();await loadKeys();}
+    catch(error){button.disabled=KeyControls.state(key)!=='active';throw error;}
+   });action.append(button);
+  } else action.textContent='—';
+  row.append(action);body.append(row);keyRows.push({key,status,expiry});
  }
-}
-const offsets = {active:0, inactive:0};
-const rowsByStatus = {active:[], inactive:[]};
-async function loadKeys(kind = 'active') {
- const target = el(kind === 'active' ? 'keys' : 'archivedKeys');
- const pages = el(kind === 'active' ? 'activePages' : 'inactivePages');
- const result = await api('/me/keys?status='+kind+'&offset='+offsets[kind]);
- const keys = [...(result.data || [])].sort((a,b) => Number(KeyControls.state(b)==='active') - Number(KeyControls.state(a)==='active'));
- target.replaceChildren(); rowsByStatus[kind] = [];
- for (const key of keys) {
-  const row = document.createElement('p');
-  row.dataset.keyId = key.id;
-  const name = document.createElement('strong'); name.textContent = key.name || key.id;
-  const status = document.createElement('span'); status.className = 'key-status';
-  const expiry = document.createElement('span'); expiry.className = 'key-expiry';
-  const id = document.createElement('small'); id.textContent = key.id;
-  const operation={pending:false};
-  const button = document.createElement('button'); button.className='btn btn-outline'; button.textContent='Revoke';
-  button.onclick = report(async () => {
-   if (button.disabled || !window.confirm('Revoke this key? Applications using it will lose access.')) return;
-   operation.pending=true;button.disabled = true;
-   try {await api('/me/keys/'+encodeURIComponent(key.id), 'DELETE'); key.status='revoked'; refreshKeyTimes();}
-   catch(error) {throw error;}finally{operation.pending=false;refreshKeyTimes();}
-  });
-  row.append(name, ' — ', status, document.createElement('br'), expiry, document.createElement('br'), id, button);
-  target.append(row); rowsByStatus[kind].push({key,status,expiry,button,operation});
- }
- if (!keys.length) target.textContent = 'No keys.';
- keyRows = [...rowsByStatus.active, ...rowsByStatus.inactive];
- pages.replaceChildren();
- for (const [label, delta, enabled] of [['Previous', -50, offsets[kind]>0], ['Next', 50, !!result.has_more]]) {
-  const button = document.createElement('button'); button.className='btn btn-outline';button.textContent=label;button.disabled=!enabled;
-  button.onclick=report(async()=>{button.disabled=true;const old=offsets[kind];offsets[kind]+=delta;try{await loadKeys(kind);}catch(error){offsets[kind]=old;button.disabled=false;throw error;}});pages.append(button);
- }
+ el('keys').replaceChildren(table);
+ if(!page.rows.length){const row=document.createElement('tr'),cell=document.createElement('td');cell.colSpan=4;cell.textContent='No matching keys.';row.append(cell);body.append(row);}
+ TableControls.pager(el('keyPages'),{offset:keyOffset,size,hasMore:page.hasMore,count:filtered.length,onPage:offset=>{keyOffset=offset;renderKeys();}});
  refreshKeyTimes();
 }
-el('listKeys').onclick = report(async()=>{await loadKeys();if(el('inactiveKeys').open)await loadKeys('inactive');});
-el('inactiveKeys').addEventListener('toggle', report(async()=>{if(el('inactiveKeys').open)await loadKeys('inactive');}));
-setInterval(refreshKeyTimes, 1000);
-report(async()=>{const who=await api('/api/v1/whoami');keyOwner=who.user;el('identity').textContent='Signed in as '+who.user;el('nav-user').textContent=who.user;el('tab-team').hidden=!who.isManager;el('tab-admin').hidden=!who.isSuperAdmin;if(who.impersonating){el('key').hidden=true;el('listKeys').hidden=true;}else{await loadKeys();}})();
+function refreshKeyTimes() {
+ if(keys.map(key=>KeyControls.state(key)).join(',')!==keyStateSnapshot){renderKeys();return;}
+ for(const {key,expiry} of keyRows){const date=KeyControls.expiry(key);expiry.textContent=(date&&Number.isFinite(Date.parse(date))?new Date(date).toLocaleString()+' — ':'')+KeyControls.remaining(key);}
+}
+async function loadKeys() {
+ const generation=++keyGeneration;
+ el('keys').setAttribute('aria-busy','true');el('refreshKeys').disabled=true;
+ try {
+  const loaded=await TableControls.loadKeys(api);
+  if(generation!==keyGeneration)return;
+  keys=loaded;renderKeys();
+ } catch(error) {
+  if(generation!==keyGeneration)return;
+  keys=[];keyRows=[];el('keys').textContent='Keys could not be loaded. Use Refresh to retry.';el('keyPages').replaceChildren();throw error;
+ } finally {if(generation===keyGeneration){el('keys').setAttribute('aria-busy','false');el('refreshKeys').disabled=false;}}
+}
+const resetKeys=()=>{clearTimeout(keySearchTimer);keyOffset=0;renderKeys();};
+el('keySearch').addEventListener('submit',event=>{event.preventDefault();resetKeys();});
+el('keySearch').elements.search.addEventListener('input',()=>{clearTimeout(keySearchTimer);keySearchTimer=setTimeout(resetKeys,200);});
+el('keyState').addEventListener('change',resetKeys);
+el('keyPageSize').addEventListener('change',resetKeys);
+el('refreshKeys').onclick=report(loadKeys);
+setInterval(refreshKeyTimes,1000);
+report(async()=>{
+ const who=await api('/api/v1/whoami');keyOwner=who.user;el('nav-user').textContent=who.display_name||who.user;
+ el('tab-team').hidden=!who.isManager;el('tab-admin').hidden=!who.isSuperAdmin;
+ if(who.impersonating){el('identity').hidden=false;el('identity').textContent='Key management is unavailable while viewing as another user.';return;}
+ if(!who.keyServiceEnabled){el('identity').hidden=false;el('identity').textContent='Key management is not configured.';return;}
+ el('keyManagement').hidden=false;await loadKeys();
+})();
 </script></html>
