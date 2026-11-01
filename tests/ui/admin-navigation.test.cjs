@@ -95,3 +95,30 @@ test('personal key workspace has consistently named list and creation tabs',()=>
  assert.match(page, /id="vtab-my-keys"[^>]*aria-selected="true"/);
  assert.match(page, /id="tab-create-key"[^>]*hidden/);
 });
+
+test('team navigation includes super-admins and managers, not plain admins or members',async()=>{
+ const vm=require('node:vm');
+ const cases=[
+  {name:'super-admin without reports',isSuperAdmin:true,isManager:false,isAdmin:true,visible:true},
+  {name:'manager',isSuperAdmin:false,isManager:true,isAdmin:false,visible:true},
+  {name:'admin with reports',isSuperAdmin:false,isManager:true,isAdmin:true,visible:true},
+  {name:'plain admin',isSuperAdmin:false,isManager:false,isAdmin:true,visible:false},
+  {name:'team member',isSuperAdmin:false,isManager:false,isAdmin:false,visible:false},
+  {name:'impersonated team member',isSuperAdmin:false,isManager:false,isAdmin:false,impersonating:true,visible:false},
+ ];
+ for(const role of cases){
+  const who={user:'fixture',display_name:'Fixture',keyServiceEnabled:false,managementEnabled:false,...role};
+  const personal=dashboard('management.html');
+  const elements=Object.fromEntries(['nav-user','tab-team','tab-admin','identity'].map(id=>[id,{hidden:true}]));
+  const ctx={api:async()=>who,el:id=>elements[id],report:fn=>fn};vm.createContext(ctx);
+  const start=personal.indexOf('report(async()=>{\n const who=');
+  assert.ok(start>=0);await vm.runInContext(personal.slice(start,personal.indexOf('</script>',start)),ctx);
+  assert.equal(!elements['tab-team'].hidden,role.visible,'My keys: '+role.name);
+  const nodes=Object.fromEntries(['team-tab','abUser','my-view-btn'].map(id=>[id,{style:{display:'none'}}]));
+  const adminContext={fetch:async()=>({json:async()=>who}),document:{getElementById:id=>nodes[id]},esc:String,encodeURIComponent};
+  vm.createContext(adminContext);
+  const headerStart=html.indexOf('fetch("/whoami")');assert.ok(headerStart>=0);
+  await vm.runInContext(html.slice(headerStart,html.indexOf('</script>',headerStart)),adminContext);
+  assert.equal(nodes['team-tab'].style.display!=='none',role.visible,'Admin: '+role.name);
+ }
+});

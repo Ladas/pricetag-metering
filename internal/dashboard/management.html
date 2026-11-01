@@ -197,7 +197,7 @@ el('refreshKeys').onclick=report(loadKeys);
 setInterval(refreshKeyTimes,1000);
 report(async()=>{
  const who=await api('/api/v1/whoami');keyOwner=who.user;el('nav-user').textContent=who.display_name||who.user;
- el('tab-team').hidden=!who.isManager;el('tab-admin').hidden=!who.isSuperAdmin;
+ el('tab-team').hidden=!(who.isSuperAdmin||who.isManager);el('tab-admin').hidden=!who.isSuperAdmin;
  if(who.impersonating){el('identity').hidden=false;el('identity').textContent='Key management is unavailable while viewing as another user.';return;}
  if(!who.keyServiceEnabled){el('identity').hidden=false;el('identity').textContent='Key management is not configured.';return;}
  el('keyManagement').hidden=false;await loadKeys();

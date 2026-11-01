@@ -2487,7 +2487,7 @@ fetch("/whoami").then(function(r){return r.json()}).then(function(d){
   }
   var mvb=document.getElementById("my-view-btn");
   if(mvb&&d.user){mvb.href="/admin/impersonate?as="+encodeURIComponent(d.user);}
-  if(d.isManager){var tt=document.getElementById("team-tab");if(tt)tt.style.display="";}
+  if(d.isSuperAdmin||d.isManager){var tt=document.getElementById("team-tab");if(tt)tt.style.display="";}
 }).catch(function(){})
 </script>
 <!-- Model pricing modal (shared across pages) -->
