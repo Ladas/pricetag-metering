@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -204,9 +205,23 @@ var rebuildToolHourSQL = fmt.Sprintf(`
 		cache_creation_tokens = EXCLUDED.cache_creation_tokens, cost_usd = EXCLUDED.cost_usd`, dashboardToolSQL, dashboardToolSQL)
 
 func (s *Store) metaGet(ctx context.Context, key string) (string, bool) {
+	v, ok, _ := s.metaLookup(ctx, key)
+	return v, ok
+}
+
+// metaLookup distinguishes a missing row from a database error so callers on
+// the dashboard path can log a real dependency failure instead of treating
+// every failure as "the worker has not reported yet".
+func (s *Store) metaLookup(ctx context.Context, key string) (string, bool, error) {
 	var v string
 	err := s.db.QueryRowContext(ctx, `SELECT value FROM rollup_meta WHERE key = $1`, key).Scan(&v)
-	return v, err == nil
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return v, true, nil
 }
 
 func (s *Store) metaSet(ctx context.Context, key, value string) error {
@@ -216,14 +231,195 @@ func (s *Store) metaSet(ctx context.Context, key, value string) error {
 	return err
 }
 
+// metaLookupParity reads the shared parity verdict in one statement so the
+// healthy flag and its timestamp always come from the same snapshot.
+func (s *Store) metaLookupParity(ctx context.Context) (healthyRaw, checkedRaw string, checkedFound bool, err error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT key, value FROM rollup_meta WHERE key IN ($1, $2)`,
+		metaParityHealthy, metaParityCheckedAt)
+	if err != nil {
+		return "", "", false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			return "", "", false, err
+		}
+		switch key {
+		case metaParityHealthy:
+			healthyRaw = value
+		case metaParityCheckedAt:
+			checkedRaw = value
+			checkedFound = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", "", false, err
+	}
+	return healthyRaw, checkedRaw, checkedFound, nil
+}
+
+// metaSetParity writes the parity verdict atomically. When guardBefore is
+// non-zero the write is skipped if a newer verdict (a repricing invalidation
+// or another check) landed after guardBefore, so a long-running check cannot
+// overwrite a fresher invalidation.
+func (s *Store) metaSetParity(ctx context.Context, healthy bool, checkedAt, guardBefore time.Time) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.QueryContext(ctx,
+		`SELECT key, value FROM rollup_meta WHERE key IN ($1, $2) FOR UPDATE`,
+		metaParityHealthy, metaParityCheckedAt)
+	if err != nil {
+		return false, err
+	}
+	var currentCheckedAt string
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			_ = rows.Close()
+			return false, err
+		}
+		if key == metaParityCheckedAt {
+			currentCheckedAt = value
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return false, err
+	}
+	if err := rows.Close(); err != nil {
+		return false, err
+	}
+	if !guardBefore.IsZero() && currentCheckedAt != "" {
+		if parsed, parseErr := time.Parse(time.RFC3339, currentCheckedAt); parseErr == nil && parsed.After(guardBefore) {
+			return false, nil
+		}
+	}
+
+	healthyStr := "false"
+	if healthy {
+		healthyStr = "true"
+	}
+	for key, value := range map[string]string{
+		metaParityHealthy:   healthyStr,
+		metaParityCheckedAt: checkedAt.UTC().Format(time.RFC3339),
+	} {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO rollup_meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+			key, value); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// parityStateFromMeta interprets the shared parity verdict written by whichever
+// process owns maintenance. Pure so the staleness rule is testable without a
+// database.
+func parityStateFromMeta(healthyRaw, checkedRaw string, now time.Time, maxAge time.Duration) (healthy bool, checkedAt time.Time, ok bool) {
+	if checkedRaw == "" {
+		return false, time.Time{}, false
+	}
+	parsed, err := time.Parse(time.RFC3339, checkedRaw)
+	if err != nil {
+		return false, time.Time{}, false
+	}
+	// A verdict from the future is a clock error, not freshness; treat it as
+	// red until the worker reports a sane timestamp.
+	if parsed.After(now.Add(5 * time.Minute)) {
+		return false, parsed, true
+	}
+	if maxAge > 0 && now.Sub(parsed) > maxAge {
+		return false, parsed, true
+	}
+	return healthyRaw == "true", parsed, true
+}
+
+// RunParitySync keeps this process's parity state in step with rollup_meta.
+// API-mode pods do not run maintenance; without this they would fall back to
+// raw reads forever once a dedicated worker owns the loop.
+func (s *Store) RunParitySync(ctx context.Context, interval, maxAge time.Duration) {
+	if interval < 5*time.Second {
+		interval = 5 * time.Second
+	}
+	s.syncParityFromMeta(ctx, maxAge)
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.syncParityFromMeta(ctx, maxAge)
+		}
+	}
+}
+
+func (s *Store) syncParityFromMeta(ctx context.Context, maxAge time.Duration) {
+	// Latch the shared backfill flag first: api-mode pods do not run the
+	// backfill, and rollupsLive() requires this cache alongside parity.
+	readyBefore := s.rollupsReadyNow.Load()
+	if s.RollupsReady(ctx) && !readyBefore {
+		slog.Info("rollup readiness synced from rollup_meta")
+	}
+	healthyRaw, checkedRaw, ok, err := s.metaLookupParity(ctx)
+	if err != nil {
+		slog.Warn("read rollup parity state failed", "error", err)
+		// An unreadable verdict is not a green one: clear the local gate so
+		// this pod falls back to raw instead of trusting an older state.
+		s.parityHealthy.Store(false)
+		s.servingRollups.Store(false)
+		return
+	}
+	if !ok {
+		if s.parityMetaMissing.CompareAndSwap(false, true) {
+			slog.Warn("rollup parity checked_at missing — dashboard rollups stay off until the worker reports")
+		}
+		s.parityHealthy.Store(false)
+		s.servingRollups.Store(false)
+		return
+	}
+	s.parityMetaMissing.Store(false)
+	healthy, checkedAt, parsed := parityStateFromMeta(healthyRaw, checkedRaw, time.Now().UTC(), maxAge)
+	if !parsed {
+		slog.Warn("rollup parity checked_at is unparsable — staying on raw reads", "value", checkedRaw)
+		s.parityHealthy.Store(false)
+		s.servingRollups.Store(false)
+		return
+	}
+	prev := s.parityHealthy.Swap(healthy)
+	green := 0.0
+	if healthy {
+		green = 1
+	}
+	metrics.RollupParityGreen.Set(green)
+	metrics.RollupParityCheckedAtSeconds.Set(float64(checkedAt.Unix()))
+	if prev != healthy {
+		slog.Info("rollup parity state synced from rollup_meta",
+			"healthy", healthy, "checked_at", checkedRaw, "stale_after", maxAge.String())
+	}
+}
+
 // RollupsReady reports whether usage_hourly is trustworthy for reads —
 // the gate for the Phase 3 read switch (PR B). Memory flag first; meta
 // after, so a restarted pod with a completed backfill is instantly ready.
-func (s *Store) RollupsReady() bool {
+// The meta read is bounded so a hung database cannot stall the parity sync
+// or the maintenance loop.
+func (s *Store) RollupsReady(ctx context.Context) bool {
 	if s.rollupsReadyNow.Load() {
 		return true
 	}
-	if v, ok := s.metaGet(context.Background(), metaRollupsReady); ok && v == "true" {
+	metaCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if v, ok := s.metaGet(metaCtx, metaRollupsReady); ok && v == "true" {
 		s.rollupsReadyNow.Store(true)
 		return true
 	}
@@ -234,7 +430,7 @@ func (s *Store) RollupsReady() bool {
 // rebuild to completion, resuming from watermarks. Safe to launch on
 // every boot: in steady state it reads one meta row and exits.
 func (s *Store) EnsureRollupsBackfilled(ctx context.Context) {
-	if s.RollupsReady() {
+	if s.RollupsReady(ctx) {
 		for {
 			if err := s.ensureToolRollups(ctx); err == nil {
 				break
@@ -592,14 +788,21 @@ func (s *Store) RunRollupMaintenance(ctx context.Context, interval time.Duration
 
 func (s *Store) maintainOnce(ctx context.Context, deep bool) {
 	start := time.Now()
-	if !s.RollupsReady() {
+	if !s.RollupsReady(ctx) {
 		return // the backfill goroutine owns the table until it lands ready
 	}
 	if err := s.refreshRecentHours(ctx); err != nil {
 		slog.Error("rollup refresh failed", "error", err)
+		// A failed pass must not look like a healthy one: clear the local
+		// read gate and publish a red verdict with a fresh checked_at so
+		// api pods fall back to raw instead of trusting the last green for
+		// the full staleness window.
+		s.parityHealthy.Store(false)
+		s.servingRollups.Store(false)
+		if _, writeErr := s.metaSetParity(ctx, false, time.Now().UTC(), start); writeErr != nil {
+			slog.Warn("failed to publish red parity after refresh failure", "error", writeErr)
+		}
 		metrics.RollupRefreshDurationSeconds.Observe(time.Since(start).Seconds())
-		// A failed pass must not look like a healthy one: mark the parity
-		// state unavailable and leave the checked-at timestamp stale.
 		metrics.RollupParityGreen.Set(math.NaN())
 		return
 	}
@@ -613,6 +816,11 @@ func (s *Store) maintainOnce(ctx context.Context, deep bool) {
 	report, err := s.ParityReport(ctx, until.Add(-window), until)
 	if err != nil {
 		slog.Error("rollup parity check failed", "window", window, "error", err)
+		s.parityHealthy.Store(false)
+		s.servingRollups.Store(false)
+		if _, writeErr := s.metaSetParity(ctx, false, time.Now().UTC(), start); writeErr != nil {
+			slog.Warn("failed to publish red parity after parity check failure", "error", writeErr)
+		}
 		metrics.RollupRefreshDurationSeconds.Observe(time.Since(start).Seconds())
 		metrics.RollupParityGreen.Set(math.NaN())
 		return
@@ -632,20 +840,32 @@ func (s *Store) maintainOnce(ctx context.Context, deep bool) {
 	if !red {
 		parityGreen = 1.0
 	}
-	metrics.RollupParityGreen.Set(parityGreen)
-	metrics.RollupParityCheckedAtSeconds.Set(float64(time.Now().Unix()))
-	prev := s.parityHealthy.Swap(!red)
-	healthyStr, checkedAt := "false", time.Now().UTC().Format(time.RFC3339)
-	if !red {
-		healthyStr = "true"
+	now := time.Now().UTC()
+	prev := s.parityHealthy.Load()
+	wrote, writeErr := s.metaSetParity(ctx, !red, now, start)
+	switch {
+	case writeErr != nil:
+		slog.Warn("failed to publish rollup parity verdict", "error", writeErr)
+		// The shared verdict was not updated; keep this pod on raw rather
+		// than claiming a local green the other processes cannot see.
+		s.parityHealthy.Store(false)
+		s.servingRollups.Store(false)
+		metrics.RollupParityGreen.Set(math.NaN())
+	case !wrote:
+		slog.Info("parity verdict skipped — a newer invalidation landed during the check", "window", window)
+		s.parityHealthy.Store(false)
+		s.servingRollups.Store(false)
+		metrics.RollupParityGreen.Set(math.NaN())
+	default:
+		s.parityHealthy.Store(!red)
+		metrics.RollupParityGreen.Set(parityGreen)
+		metrics.RollupParityCheckedAtSeconds.Set(float64(now.Unix()))
 	}
-	_ = s.metaSet(ctx, metaParityHealthy, healthyStr)
-	_ = s.metaSet(ctx, metaParityCheckedAt, checkedAt)
 	if red {
 		slog.Error("ROLLUP PARITY RED — dashboard aggregations falling back to raw", "window", window, "shapes", report)
-	} else if deep {
+	} else if deep && wrote {
 		slog.Info("rollup parity green", "window", window)
-	} else if !prev {
+	} else if !prev && s.parityHealthy.Load() {
 		slog.Info("rollup parity recovered — dashboard reads return to usage_hourly")
 	}
 }
@@ -672,11 +892,10 @@ type ParityShape struct {
 // change inside the window (raw re-prices at today's table, the rollup
 // holds insert-time prices); it is reported as a note, not a red, and a
 // human reads it — auto-falling-back on every catalog change would keep
-// the table permanently switched off. The per-group keying intentionally
-// renders raw's NULL-to-'unknown'/empty labels and the rollup's
-// collapse-to-empty differently; if legacy empty-string-versus-NULL group
-// rows ever make that shape red, it is a real divergence to look at, not
-// to paper over. The whole report runs inside ONE REPEATABLE READ
+// the table permanently switched off. Group labels are normalized the same
+// way on both sides — NULL and empty group_name render as 'unknown' — so
+// legacy empty-string rows do not read as drift. The whole report runs
+// inside ONE REPEATABLE READ
 // transaction on the reader connection: the invariant only holds within
 // one snapshot — a raw query at WAL position P and the rollup query at
 // a later P' would diff every event that replicated in between.
@@ -788,10 +1007,10 @@ func parityShapes() []parityShapeSQL {
 			`SELECT model, COALESCE(SUM(requests),0), COALESCE(ROUND(SUM(cost_usd)::numeric,2),0)::float8
 				FROM usage_hourly WHERE hour >= $1 AND hour < $2 GROUP BY model`},
 		{"per_group",
-			fmt.Sprintf(`SELECT COALESCE(e.group_name, 'unknown'), COUNT(*), COALESCE(ROUND(SUM(%s)::numeric,2),0)::float8
+			fmt.Sprintf(`SELECT COALESCE(NULLIF(e.group_name, ''), 'unknown'), COUNT(*), COALESCE(ROUND(SUM(%s)::numeric,2),0)::float8
 				FROM usage_events e LEFT JOIN model_pricing p ON e.model = p.model
 				WHERE e.timestamp >= $1 AND e.timestamp < $2
-				GROUP BY COALESCE(e.group_name, 'unknown')`, costUSDExpr),
+				GROUP BY COALESCE(NULLIF(e.group_name, ''), 'unknown')`, costUSDExpr),
 			`SELECT COALESCE(NULLIF(group_name, ''), 'unknown'), COALESCE(SUM(requests),0), COALESCE(ROUND(SUM(cost_usd)::numeric,2),0)::float8
 				FROM usage_hourly WHERE hour >= $1 AND hour < $2
 				GROUP BY COALESCE(NULLIF(group_name, ''), 'unknown')`},
@@ -840,7 +1059,7 @@ const rollupOverviewSQL = `
 		COUNT(DISTINCT e.username),
 		COALESCE(ROUND(SUM(e.cost_usd)::numeric, 2), 0)
 	FROM usage_hourly e
-	WHERE e.hour >= $1 AND e.hour < $2 AND ($3 = '' OR e.group_name = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5)`
+	WHERE e.hour >= $1 AND e.hour < $2 AND ($3 = '' OR COALESCE(NULLIF(e.group_name, ''), 'unknown') = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5)`
 
 const rollupGroupsSQL = `
 	SELECT COALESCE(NULLIF(e.group_name, ''), 'unknown'),
@@ -849,7 +1068,7 @@ const rollupGroupsSQL = `
 		COUNT(DISTINCT e.username),
 		COALESCE(ROUND(SUM(e.cost_usd)::numeric, 2), 0)
 	FROM usage_hourly e
-	WHERE e.hour >= $1 AND e.hour < $2 AND ($3 = '' OR e.group_name = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5)
+	WHERE e.hour >= $1 AND e.hour < $2 AND ($3 = '' OR COALESCE(NULLIF(e.group_name, ''), 'unknown') = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5)
 	GROUP BY COALESCE(NULLIF(e.group_name, ''), 'unknown')
 	ORDER BY SUM(e.total_tokens) DESC`
 
@@ -861,7 +1080,7 @@ const rollupTeamUsageSQL = `
 		SUM(e.total_tokens),
 		ROUND(SUM(e.cost_usd)::numeric, 4)
 	FROM usage_hourly e
-	WHERE e.group_name = $1
+	WHERE (e.group_name = $1 OR ($1 = 'unknown' AND e.group_name = ''))
 	GROUP BY e.username, e.model, e.provider
 	ORDER BY e.username, SUM(e.total_tokens) DESC`
 
@@ -884,7 +1103,7 @@ var rollupModelsSQL = fmt.Sprintf(`
 		COALESCE(MAX(p.cache_write_cost_per_mtok), 0)
 	FROM usage_hourly e
 	LEFT JOIN model_pricing p ON e.model = p.model
-	WHERE e.hour >= $1 AND e.hour < $2 AND ($3 = '' OR e.group_name = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5)
+	WHERE e.hour >= $1 AND e.hour < $2 AND ($3 = '' OR COALESCE(NULLIF(e.group_name, ''), 'unknown') = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5)
 	GROUP BY e.model, COALESCE(e.provider, '')
 	ORDER BY SUM(e.total_tokens) DESC`, hostedProviderCond)
 
@@ -898,7 +1117,7 @@ func rollupTimelineSQL(truncInterval, seriesCol string) string {
 			COALESCE(ROUND(SUM(e.cost_usd)::numeric,2),0),
 			COALESCE(SUM(e.requests),0)
 		FROM usage_hourly e
-		WHERE e.hour >= $1 AND e.hour < $2 AND ($3 = '' OR e.group_name = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5)
+		WHERE e.hour >= $1 AND e.hour < $2 AND ($3 = '' OR COALESCE(NULLIF(e.group_name, ''), 'unknown') = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5)
 		GROUP BY bucket, series
 		ORDER BY bucket, series`, truncInterval, seriesCol)
 }
@@ -909,7 +1128,7 @@ func rollupTimelineSQL(truncInterval, seriesCol string) string {
 var rollupUsersSelect = `
 		SELECT e.username,
 			%s,
-			COALESCE(e.group_name, ''),
+			COALESCE(NULLIF(e.group_name, ''), 'unknown'),
 			COALESCE(SUM(e.requests),0) as requests,
 			COALESCE(SUM(e.prompt_tokens),0) as prompt_tokens,
 			COALESCE(SUM(e.completion_tokens),0) as completion_tokens,
@@ -919,10 +1138,10 @@ var rollupUsersSelect = `
 		FROM usage_hourly e
 		LEFT JOIN (SELECT l.username AS username, pu.tags->>'first_name' AS first_name, pu.tags->>'last_name' AS last_name FROM partner_user_logins l JOIN partner_users pu ON pu.user_id = l.user_id) up ON up.username = e.username
 		LEFT JOIN sv ON sv.username = e.username
-		WHERE e.hour >= $1 AND e.hour < $2 AND ($3 = '' OR e.group_name = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5)
+		WHERE e.hour >= $1 AND e.hour < $2 AND ($3 = '' OR COALESCE(NULLIF(e.group_name, ''), 'unknown') = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5)
 			AND ($9 = '' OR lower(e.username) LIKE '%%' || lower($9) || '%%' OR lower(TRIM(CONCAT_WS(' ', up.first_name, up.last_name))) LIKE '%%' || lower($9) || '%%')
-		GROUP BY e.username, %s, COALESCE(e.group_name, '')
-		ORDER BY %s %s, e.username ASC, COALESCE(e.group_name, '') ASC
+		GROUP BY e.username, %s, COALESCE(NULLIF(e.group_name, ''), 'unknown')
+		ORDER BY %s %s, e.username ASC, COALESCE(NULLIF(e.group_name, ''), 'unknown') ASC
 		LIMIT $6 OFFSET $7`
 
 // RecentModels returns the distinct model identifiers seen in the last 7
@@ -932,7 +1151,7 @@ var rollupUsersSelect = `
 func (s *Store) RecentModels(ctx context.Context) ([]string, error) {
 	query := `SELECT DISTINCT model FROM usage_events
 		WHERE timestamp >= NOW() - interval '7 days' AND model <> '' ORDER BY model`
-	if s.RollupsReady() {
+	if s.RollupsReady(ctx) {
 		query = `SELECT DISTINCT model FROM usage_hourly
 			WHERE hour >= date_trunc('hour', NOW()) - interval '7 days' AND model <> '' ORDER BY model`
 	}

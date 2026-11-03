@@ -123,6 +123,9 @@ type Store struct {
 	liveRollups    atomic.Bool
 	parityHealthy  atomic.Bool
 	servingRollups atomic.Bool
+	// parityMetaMissing suppresses the "worker has not reported yet" warning
+	// after the first occurrence; it resets once a verdict appears.
+	parityMetaMissing atomic.Bool
 	// Unix nanoseconds of the last successful maintenance rebuild. This is
 	// intentionally separate from rollupsReadyNow: ready means backfill has
 	// completed, while this value reports current freshness for eventual
@@ -438,7 +441,7 @@ func (s *Store) GetTeamUsage(ctx context.Context, groupName string) ([]TeamUserU
 			ROUND(SUM(%s)::numeric, 4) as cost_usd
 		FROM usage_events e
 		LEFT JOIN model_pricing p ON e.model = p.model
-		WHERE e.group_name = $1
+		WHERE (e.group_name = $1 OR ($1 = 'unknown' AND (e.group_name = '' OR e.group_name IS NULL)))
 		GROUP BY e.username, e.model, e.provider
 		ORDER BY e.username, total_tokens DESC`, costUSDExpr)
 	if s.rollupsLive() {
@@ -729,7 +732,7 @@ func (s *Store) GetDashboardOverview(ctx context.Context, since, until time.Time
 			COALESCE(ROUND(SUM(%s)::numeric, 2), 0)
 		FROM usage_events e
 		LEFT JOIN model_pricing p ON e.model = p.model
-		WHERE e.timestamp >= $1 AND e.timestamp < $2 AND ($3 = '' OR e.group_name = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5)`, costUSDExpr)
+		WHERE e.timestamp >= $1 AND e.timestamp < $2 AND ($3 = '' OR COALESCE(NULLIF(e.group_name, ''), 'unknown') = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5)`, costUSDExpr)
 	if s.rollupsLive() {
 		query = rollupOverviewSQL
 	}
@@ -742,15 +745,15 @@ func (s *Store) GetDashboardOverview(ctx context.Context, since, until time.Time
 
 func (s *Store) GetDashboardGroups(ctx context.Context, since, until time.Time, group, user, model string) ([]GroupSummary, error) {
 	query := fmt.Sprintf(`
-		SELECT COALESCE(e.group_name, 'unknown'),
+		SELECT COALESCE(NULLIF(e.group_name, ''), 'unknown'),
 			COUNT(*),
 			COALESCE(SUM(e.total_tokens),0),
 			COUNT(DISTINCT e.username),
 			COALESCE(ROUND(SUM(%s)::numeric, 2), 0)
 		FROM usage_events e
 		LEFT JOIN model_pricing p ON e.model = p.model
-		WHERE e.timestamp >= $1 AND e.timestamp < $2 AND ($3 = '' OR e.group_name = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5)
-		GROUP BY COALESCE(e.group_name, 'unknown')
+		WHERE e.timestamp >= $1 AND e.timestamp < $2 AND ($3 = '' OR COALESCE(NULLIF(e.group_name, ''), 'unknown') = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5)
+		GROUP BY COALESCE(NULLIF(e.group_name, ''), 'unknown')
 		ORDER BY SUM(e.total_tokens) DESC`, costUSDExpr)
 	if s.rollupsLive() {
 		query = rollupGroupsSQL
@@ -820,7 +823,7 @@ func (s *Store) GetDashboardUsers(ctx context.Context, since, until time.Time, g
 		query += fmt.Sprintf(`
 		SELECT e.username,
 			%s,
-			COALESCE(e.group_name, ''),
+			COALESCE(NULLIF(e.group_name, ''), 'unknown'),
 			COUNT(*) as requests,
 			COALESCE(SUM(e.prompt_tokens),0) as prompt_tokens,
 			COALESCE(SUM(e.completion_tokens),0) as completion_tokens,
@@ -831,9 +834,9 @@ func (s *Store) GetDashboardUsers(ctx context.Context, since, until time.Time, g
 		LEFT JOIN model_pricing p ON e.model = p.model
 		LEFT JOIN (SELECT l.username AS username, pu.tags->>'first_name' AS first_name, pu.tags->>'last_name' AS last_name FROM partner_user_logins l JOIN partner_users pu ON pu.user_id = l.user_id) up ON up.username = e.username
 		LEFT JOIN sv ON sv.username = e.username
-		WHERE e.timestamp >= $1 AND e.timestamp < $2 AND ($3 = '' OR e.group_name = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5) AND ($9 = '' OR lower(e.username) LIKE '%%' || lower($9) || '%%' OR lower(TRIM(CONCAT_WS(' ', up.first_name, up.last_name))) LIKE '%%' || lower($9) || '%%')
-		GROUP BY e.username, %s, COALESCE(e.group_name, '')
-		ORDER BY %s %s, e.username ASC, COALESCE(e.group_name, '') ASC
+		WHERE e.timestamp >= $1 AND e.timestamp < $2 AND ($3 = '' OR COALESCE(NULLIF(e.group_name, ''), 'unknown') = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5) AND ($9 = '' OR lower(e.username) LIKE '%%' || lower($9) || '%%' OR lower(TRIM(CONCAT_WS(' ', up.first_name, up.last_name))) LIKE '%%' || lower($9) || '%%')
+		GROUP BY e.username, %s, COALESCE(NULLIF(e.group_name, ''), 'unknown')
+		ORDER BY %s %s, e.username ASC, COALESCE(NULLIF(e.group_name, ''), 'unknown') ASC
 			LIMIT $6 OFFSET $7`, displayNameExpr, costUSDExpr, displayNameExpr, sortExpr, direction)
 	}
 
@@ -882,7 +885,7 @@ func dashboardUsersWithoutSavingsSQL(rollup bool, displayNameExpr, sortExpr, dir
 	return fmt.Sprintf(`
 		SELECT e.username,
 			%s,
-			COALESCE(e.group_name, '') AS group_name,
+			COALESCE(NULLIF(e.group_name, ''), 'unknown') AS group_name,
 			%s AS requests,
 			COALESCE(SUM(e.prompt_tokens),0) AS prompt_tokens,
 			COALESCE(SUM(e.completion_tokens),0) AS completion_tokens,
@@ -892,10 +895,10 @@ func dashboardUsersWithoutSavingsSQL(rollup bool, displayNameExpr, sortExpr, dir
 		FROM %s
 		LEFT JOIN (SELECT l.username AS username, pu.tags->>'first_name' AS first_name, pu.tags->>'last_name' AS last_name
 			FROM partner_user_logins l JOIN partner_users pu ON pu.user_id = l.user_id) up ON up.username = e.username
-		WHERE %s AND ($3 = '' OR e.group_name = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5)
+		WHERE %s AND ($3 = '' OR COALESCE(NULLIF(e.group_name, ''), 'unknown') = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5)
 			AND ($8 = '' OR lower(e.username) LIKE '%%' || lower($8) || '%%' OR lower(TRIM(CONCAT_WS(' ', up.first_name, up.last_name))) LIKE '%%' || lower($8) || '%%')
-		GROUP BY e.username, %s, COALESCE(e.group_name, '')
-		ORDER BY %s %s, e.username ASC, COALESCE(e.group_name, '') ASC
+		GROUP BY e.username, %s, COALESCE(NULLIF(e.group_name, ''), 'unknown')
+		ORDER BY %s %s, e.username ASC, COALESCE(NULLIF(e.group_name, ''), 'unknown') ASC
 		LIMIT $6 OFFSET $7`, displayNameExpr, requests, cost, from, window, displayNameExpr, sortExpr, direction)
 }
 
@@ -1105,7 +1108,7 @@ func hostedSavingsWithSQL(refParamNum int, rollup bool) string {
 				COALESCE(bool_and(COALESCE(mc.has_cache, false)), false) as model_has_cache
 			FROM `+from+`
 			LEFT JOIN model_cache mc ON mc.model = e.model
-			WHERE `+when+` AND ($3 = '' OR e.group_name = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5)
+			WHERE `+when+` AND ($3 = '' OR COALESCE(NULLIF(e.group_name, ''), 'unknown') = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5)
 			GROUP BY e.username, e.model
 		),
 		sv AS (
@@ -1165,7 +1168,7 @@ func (s *Store) GetDashboardModels(ctx context.Context, since, until time.Time, 
 			COALESCE(MAX(p.cache_write_cost_per_mtok), 0)
 		FROM usage_events e
 		LEFT JOIN model_pricing p ON e.model = p.model
-		WHERE e.timestamp >= $1 AND e.timestamp < $2 AND ($3 = '' OR e.group_name = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5)
+		WHERE e.timestamp >= $1 AND e.timestamp < $2 AND ($3 = '' OR COALESCE(NULLIF(e.group_name, ''), 'unknown') = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5)
 		GROUP BY e.model, COALESCE(e.provider, '')
 		ORDER BY SUM(e.total_tokens) DESC`, costUSDExpr)
 	if s.rollupsLive() {
@@ -1203,7 +1206,7 @@ func (s *Store) GetDashboardTools(ctx context.Context, since, until time.Time, g
 				COUNT(DISTINCT NULLIF(e.username, ''))
 			FROM usage_tool_hourly e
 			WHERE e.hour >= date_trunc('hour', $1::timestamptz) AND e.hour < $2
-				AND ($3 = '' OR e.group_name = $3)
+				AND ($3 = '' OR COALESCE(NULLIF(e.group_name, ''), 'unknown') = $3)
 				AND ($4 = '' OR e.username = ANY(string_to_array($4, ',')))
 				AND ($5 = '' OR e.model = $5)
 			GROUP BY COALESCE(e.tool, 'Other')
@@ -1230,7 +1233,7 @@ func (s *Store) GetDashboardTools(ctx context.Context, since, until time.Time, g
 		FROM usage_events e
 		LEFT JOIN model_pricing p ON e.model = p.model
 		WHERE e.timestamp >= $1 AND e.timestamp < $2
-			AND ($3 = '' OR e.group_name = $3)
+			AND ($3 = '' OR COALESCE(NULLIF(e.group_name, ''), 'unknown') = $3)
 			AND ($4 = '' OR e.username = ANY(string_to_array($4, ',')))
 			AND ($5 = '' OR e.model = $5)
 		GROUP BY COALESCE(e.user_agent, ''), e.username`, costUSDExpr)
@@ -1305,7 +1308,7 @@ func (s *Store) GetDashboardGeo(ctx context.Context, since, until time.Time, gro
 		SELECT %s AS country, %s AS state, %s,
 			COALESCE(SUM(e.total_tokens), 0), COUNT(DISTINCT e.username), %s
 		FROM %s
-		WHERE %s AND ($3 = '' OR e.group_name = $3)
+		WHERE %s AND ($3 = '' OR COALESCE(NULLIF(e.group_name, ''), 'unknown') = $3)
 			AND ($4 = '' OR e.username = ANY(string_to_array($4, ',')))
 			AND ($5 = '' OR e.model = $5)
 		GROUP BY country, state
@@ -1349,7 +1352,7 @@ func (s *Store) GetDashboardCostCenters(ctx context.Context, since, until time.T
 		SELECT %s AS cost_center, %s,
 			COALESCE(SUM(e.total_tokens), 0), COUNT(DISTINCT e.username), %s
 		FROM %s
-		WHERE %s AND ($3 = '' OR e.group_name = $3)
+		WHERE %s AND ($3 = '' OR COALESCE(NULLIF(e.group_name, ''), 'unknown') = $3)
 			AND ($4 = '' OR e.username = ANY(string_to_array($4, ',')))
 			AND ($5 = '' OR e.model = $5)
 		GROUP BY cost_center
@@ -1418,7 +1421,7 @@ func (s *Store) GetDashboardTimeline(ctx context.Context, since, until time.Time
 			COUNT(*)
 		FROM usage_events e
 		LEFT JOIN model_pricing p ON e.model = p.model
-		WHERE e.timestamp >= $1 AND e.timestamp < $2 AND ($3 = '' OR e.group_name = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5)
+		WHERE e.timestamp >= $1 AND e.timestamp < $2 AND ($3 = '' OR COALESCE(NULLIF(e.group_name, ''), 'unknown') = $3) AND ($4 = '' OR e.username = ANY(string_to_array($4, ','))) AND ($5 = '' OR e.model = $5)
 		GROUP BY bucket, series
 		ORDER BY bucket, series`, truncInterval, seriesCol, costUSDExpr)
 	if s.rollupsLive() {
@@ -1475,7 +1478,7 @@ func (s *Store) GetRecentEvents(ctx context.Context, limit int, group, user, mod
 		limit = 20
 	}
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
-		SELECT e.timestamp, e.username, %s, COALESCE(pu.tags->>'country',''), COALESCE(pu.tags->>'state',''), COALESCE(pu.tags->>'cost_center_description',''), COALESCE(e.group_name,''), e.model, COALESCE(e.provider,''),
+		SELECT e.timestamp, e.username, %s, COALESCE(pu.tags->>'country',''), COALESCE(pu.tags->>'state',''), COALESCE(pu.tags->>'cost_center_description',''), COALESCE(NULLIF(e.group_name, ''), 'unknown'), e.model, COALESCE(e.provider,''),
 			e.prompt_tokens, e.completion_tokens, e.total_tokens,
 			COALESCE(e.cached_input_tokens, 0), COALESCE(e.cache_creation_tokens, 0),
 			COALESCE(ROUND((%s)::numeric, 4), 0),
@@ -1486,7 +1489,7 @@ func (s *Store) GetRecentEvents(ctx context.Context, limit int, group, user, mod
 		LEFT JOIN (SELECT l.username AS username, pu.tags->>'first_name' AS first_name, pu.tags->>'last_name' AS last_name FROM partner_user_logins l JOIN partner_users pu ON pu.user_id = l.user_id) up ON up.username = e.username
 		LEFT JOIN partner_user_logins pul ON pul.username = e.username AND pul.is_current
 		LEFT JOIN partner_users pu ON pu.user_id = pul.user_id
-		WHERE ($2 = '' OR e.group_name = $2) AND ($3 = '' OR e.username = ANY(string_to_array($3, ','))) AND ($4 = '' OR e.model = $4)
+		WHERE ($2 = '' OR COALESCE(NULLIF(e.group_name, ''), 'unknown') = $2) AND ($3 = '' OR e.username = ANY(string_to_array($3, ','))) AND ($4 = '' OR e.model = $4)
 		ORDER BY e.timestamp DESC
 		LIMIT $1`, displayNameExpr, costUSDExpr), limit, group, user, model)
 	if err != nil {

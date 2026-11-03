@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/redhat-et/pricetag-metering/internal/pricing"
@@ -299,6 +300,15 @@ func (s *Store) RepriceHistorical(ctx context.Context, actor string, req Histori
 	result.OperationID, result.Status, result.CompletedChunks, result.TotalChunks = op.ID, "completed", op.TotalChunks, op.TotalChunks
 	s.parityHealthy.Store(false)
 	s.servingRollups.Store(false)
+	// Share the invalidation with the other processes: API pods sync their
+	// parity state from rollup_meta, and the worker's next pass restores green.
+	// Use a detached context: the HTTP request may be cancelled after a long
+	// repricing run, and losing this signal would leave other pods on rollups.
+	metaCtx, cancelMeta := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelMeta()
+	if _, err := s.metaSetParity(metaCtx, false, time.Now().UTC(), time.Time{}); err != nil {
+		slog.Warn("failed to invalidate shared rollup parity state", "error", err)
+	}
 	return result, nil
 }
 
