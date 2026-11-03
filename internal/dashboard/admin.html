@@ -28,7 +28,7 @@ body{background:var(--bg);color:var(--t);font-family:Inter,-apple-system,BlinkMa
 .partner-detail-ov{display:none;position:fixed;inset:0;background:rgba(1,4,9,.72);z-index:180;align-items:center;justify-content:center;padding:20px}
 .partner-detail-ov.show{display:flex}.partner-detail-card{background:var(--c1);border:1px solid var(--bdr);border-radius:12px;width:100%;max-width:650px;max-height:86vh;overflow:auto;box-shadow:0 12px 40px rgba(0,0,0,.5)}
 .partner-detail-head{display:flex;align-items:center;padding:16px 18px;border-bottom:1px solid var(--bdr)}.partner-detail-head h2{flex:1;font-size:16px}.partner-detail-close{background:var(--c2);color:var(--t2);border:1px solid var(--bdr);width:28px;height:28px;border-radius:6px;cursor:pointer}.partner-detail-body{padding:18px}.partner-detail-grid{display:grid;grid-template-columns:170px 1fr;gap:8px 14px;font-size:12px}.partner-detail-key{color:var(--t2);font-weight:600}.partner-detail-value{word-break:break-word}
-.pg{max-width:1800px;margin:0 auto;padding:20px 40px}
+.pg{max-width:1800px;margin:0 auto;padding:20px}
 
 /* Header */
 .hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
@@ -500,21 +500,25 @@ td .tag{white-space:nowrap}
 .picker-row select option{background:var(--c2);color:var(--t)}
 /* ── Shared appbar (same block on every page; var fallbacks let either
    token spelling work) ─────────────────────────────────────────────── */
-.appbar{display:flex;align-items:center;gap:16px;padding:11px 18px;background:var(--c1,#141820);border-bottom:1px solid var(--bdr,#232b3b);flex-wrap:wrap;margin:-20px -40px 16px -40px}
-.appbar .logo{font-weight:700;font-size:15px;letter-spacing:.2px;white-space:nowrap;color:var(--t,#e2e6ec);padding-left:4px}
-.appbar .logo em{font-style:normal;color:var(--blu,#4da0f8)}
-.appbar nav{display:flex;gap:2px;flex-wrap:wrap}
-.appbar nav a{padding:5px 11px;border-radius:7px;color:var(--t2,#8090a8);font-size:13px;text-decoration:none}
-.appbar nav a:hover{background:var(--c2,#1a2030);color:var(--t,#e2e6ec)}
-.appbar nav a.on{background:var(--c2,#1a2030);color:var(--t,#e2e6ec);font-weight:600}
-.appbar .ab-right{margin-left:auto;display:flex;align-items:center;gap:10px}
-.ab-btn{background:none;border:1px solid var(--bdr,#232b3b);color:var(--t2,#8090a8);border-radius:7px;padding:4px 11px;font-size:13px;cursor:pointer;text-decoration:none}
-.ab-btn:hover{color:var(--t,#e2e6ec)}
-.ab-user{color:var(--grn,#3dcc6e);font-size:13px;font-weight:600}
-.ab-user .role{color:var(--t2,#8090a8);font-weight:400}
+.appbar{position:sticky;top:12px;z-index:40;display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+  min-height:58px;padding:12px 22px;background:rgba(20,24,32,.96);backdrop-filter:blur(10px);
+  border:1px solid #2e3848;border-radius:10px;
+  width:100%;max-width:1360px;margin:0 auto 16px}
+.appbar .logo{display:flex;align-items:center;gap:0;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:15px;font-weight:700;line-height:18px;letter-spacing:.2px;color:#e2e6ec;text-decoration:none;white-space:nowrap}
+.appbar .logo .en{color:#3dcc6e}
+.appbar .logo em{color:#4da0f8;font-style:normal}
+.appbar nav{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.appbar nav a{display:inline-flex;align-items:center;justify-content:center;padding:6px 14px;border-radius:8px;color:#8090a8;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:12px;font-weight:600;line-height:18px;text-decoration:none;white-space:nowrap}
+.appbar nav a:hover,.appbar nav a.on{color:#e2e6ec;background:#22262c}
+.appbar .ab-right{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.ab-btn{background:none;border:1px solid #2e3848;color:#8090a8;border-radius:8px;padding:6px 14px;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:12px;font-weight:600;line-height:18px;cursor:pointer;text-decoration:none}
+.ab-btn:hover{color:#e2e6ec}
+.ab-user{color:#3dcc6e;font-size:12px;font-weight:600}
+.ab-user .role{color:#8090a8;font-weight:400}
 .demo-pii{transition:filter .18s ease}.demo-private .demo-pii,.demo-private #partner-users-list td:first-child,.demo-private #partner-users-list td:nth-child(2){filter:blur(3px);user-select:none}.ab-user{cursor:default}.ab-user.demo-privacy-active .role{color:#e8a830;font-weight:800}
-.ab-out{color:var(--red,#e8554e);border:1px solid var(--bdr,#232b3b);border-radius:7px;padding:4px 11px;font-size:13px;text-decoration:none}
-.ab-out:hover{border-color:var(--red,#e8554e)}
+.ab-out{color:#e8554e;border:1px solid #2e3848;border-radius:8px;padding:6px 14px;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:12px;font-weight:600;line-height:18px;text-decoration:none}
+.ab-out:hover{border-color:#e8554e}
+@media(max-width:640px){.appbar{top:8px;padding:10px 14px;gap:10px}}
 /* Pricing modal (shared rate card across all pages) */
 .pm-ov{display:none;position:fixed;inset:0;background:rgba(5,7,10,.72);z-index:300;align-items:flex-start;justify-content:center;padding:40px 14px}
 .pm-ov.show{display:flex}
@@ -540,9 +544,11 @@ td .tag{white-space:nowrap}
 
 <!-- Header -->
 <header class="appbar">
-  <a class="logo" href="/dashboard">Price<em>Tag</em></a>
+  <a class="logo" href="/dashboard"><span class="en">En</span><em>MaaS</em></a>
   <nav>
-    <a href="/dashboard">Usage</a>
+    <a href="/account">My usage</a>
+    <a href="/account?tab=keys">API keys</a>
+    <a href="/dashboard">Org usage</a>
     <a href="/manager" id="team-tab" style="display:none" title="Usage for everyone on your team">My team</a>
     <a href="/routing">Routing</a>
     <a href="/admin" class="on">Admin</a>
@@ -802,11 +808,25 @@ var pendingInviteCount = 0;
 /* ================================================================
    HTML escaping
    ================================================================ */
-var escDiv = document.createElement('div');
+/* Attribute-safe HTML escaping. A textContent/innerHTML round-trip escapes
+   &, < and > but leaves both quote characters intact, so the same helper was
+   unsafe inside value="..." and data-* attributes. Escape quotes explicitly. */
 function esc(s) {
   if (s == null) return '';
-  escDiv.textContent = String(s);
-  return escDiv.innerHTML;
+  return String(s).replace(/[&<>"']/g, function(c) {
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+/* Quote-safe encoder for values spliced into inline JS string literals inside
+   HTML attributes. The HTML parser decodes entities before the handler runs,
+   so this must encode & as well as quotes — otherwise an input such as
+   "&#39;);alert(1);//" would decode back into a quote and break out of the JS
+   string. Every dangerous character becomes a \\xNN escape. */
+function jsq(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&\\'"<\n\r]/g, function(c) {
+    return '\\x' + ('0' + c.charCodeAt(0).toString(16)).slice(-2);
+  });
 }
 function countryFlag(code) {
   var normalized = String(code || '').trim().toUpperCase();
@@ -1124,7 +1144,7 @@ function loadPendingUsers() {
         + '<div class="pending-user">' + esc(p.name) + '</div>'
         + '</div>'
         + '<select class="pending-select" id="' + selectId + '">' + groupOptions + '</select>'
-        + '<button class="btn-approve" onclick="approvePendingUser(\'' + esc(p.name) + '\',\'' + selectId + '\',this)">Add to Group</button>'
+        + '<button class="btn-approve" onclick="approvePendingUser(\'' + jsq(p.name) + '\',\'' + selectId + '\',this)">Add to Group</button>'
         + '</div>';
     });
 
@@ -1256,7 +1276,7 @@ function loadGroups() {
         g.members.forEach(function(u) {
           html += '<div style="font-size:11px;color:var(--t);padding:2px 0;display:flex;align-items:center;justify-content:space-between">'
             + '<span>&#8226; ' + esc(u) + '</span>'
-            + '<button class="btn-outline" onclick="event.stopPropagation();removeFromGroup(\'' + esc(name) + '\',\'' + esc(u) + '\')" style="font-size:9px;padding:2px 6px;cursor:pointer">&times;</button>'
+            + '<button class="btn-outline" onclick="event.stopPropagation();removeFromGroup(\'' + jsq(name) + '\',\'' + jsq(u) + '\')" style="font-size:9px;padding:2px 6px;cursor:pointer">&times;</button>'
             + '</div>';
         });
       } else {
@@ -1264,7 +1284,7 @@ function loadGroups() {
       }
       html += '<div style="margin-top:8px;display:flex;gap:6px">'
         + '<input type="text" id="add-user-' + cardId + '" placeholder="username" style="flex:1;background:var(--bg,#0b0e11);color:var(--t);border:1px solid var(--bdr);padding:4px 8px;border-radius:4px;font-size:11px">'
-        + '<button class="btn-outline" onclick="event.stopPropagation();addToGroup(\'' + esc(name) + '\',\'' + cardId + '\')" style="font-size:10px;padding:4px 10px;cursor:pointer;color:var(--grn);border-color:var(--grn)">+ Add</button>'
+        + '<button class="btn-outline" onclick="event.stopPropagation();addToGroup(\'' + jsq(name) + '\',\'' + cardId + '\')" style="font-size:10px;padding:4px 10px;cursor:pointer;color:var(--grn);border-color:var(--grn)">+ Add</button>'
         + '</div>';
       html += '</div>';
 
@@ -1758,7 +1778,7 @@ function inviteMessage(name, url, ttlHours) {
     + "• This pilot does *not* give you an extra $300. The $300/month limit is per person, across all AI platforms — every dollar you spend through PriceTag counts against the same budget you already have elsewhere.\n"
     + "• PriceTag spend doesn't flow into your existing budget tools automatically. Do the math yourself: check your running total on the PriceTag dashboard and add it to what you've already spent, so nothing surprises you at month's end.\n"
     + "• Expensive models are available here — use them knowingly. Models like Fable, Astra and Opus can burn most of a month's budget in a single heavy day. Check the *Pricing* button for what each model costs before you pick it, and keep an eye on the dashboard for your first few days.\n\n"
-    + "This is early — if anything in the onboarding or the docs felt unclear, reply here and tell us. Feedback is how this gets better.";
+    + "This is early — if anything in the setup or the docs felt unclear, reply here and tell us. Feedback is how this gets better.";
 }
 
 function setInviteResult(msgElId, personName, r) {
@@ -2018,12 +2038,12 @@ function renderPeople() {
       '<td><div class="org-name">' + esc(p.full_name) + ' ' + badges + '</div>' +
       (p.title ? '<div class="org-title">' + esc(p.title) + '</div>' : '') + '</td>' +
       '<td>' + roleBadge(p._role) + '</td>' +
-      '<td><select class="tbl-input" style="min-width:120px" onchange="setPersonField(\'' + esc(p.slug) + '\',\'group_name\',this.value)">' + peopleGroupOptions(p.group_name) + '</select></td>' +
-      '<td><select class="tbl-input" style="min-width:150px" onchange="setPersonField(\'' + esc(p.slug) + '\',\'manager_slug\',this.value)">' + opts + '</select></td>' +
-      '<td><input class="tbl-input" style="min-width:170px" value="' + esc(p.email || '') + '" placeholder="fill in…" onchange="setPersonField(\'' + esc(p.slug) + '\',\'email\',this.value)"></td>' +
+      '<td><select class="tbl-input" style="min-width:120px" onchange="setPersonField(\'' + jsq(p.slug) + '\',\'group_name\',this.value)">' + peopleGroupOptions(p.group_name) + '</select></td>' +
+      '<td><select class="tbl-input" style="min-width:150px" onchange="setPersonField(\'' + jsq(p.slug) + '\',\'manager_slug\',this.value)">' + opts + '</select></td>' +
+      '<td><input class="tbl-input" style="min-width:170px" value="' + esc(p.email || '') + '" placeholder="fill in…" onchange="setPersonField(\'' + jsq(p.slug) + '\',\'email\',this.value)"></td>' +
       '<td>' + login + '</td>' +
       '<td>' + (p.reports || '') + '</td>' +
-      '<td style="white-space:nowrap">' + viewas + ' <button class="btn btn-outline" style="padding:3px 10px;font-size:9px" onclick="openInviteFor(\'' + esc(p.slug) + '\')">Invite</button></td>' +
+      '<td style="white-space:nowrap">' + viewas + ' <button class="btn btn-outline" style="padding:3px 10px;font-size:9px" onclick="openInviteFor(\'' + jsq(p.slug) + '\')">Invite</button></td>' +
       '</tr>';
   });
   html += '</tbody></table></div>';
@@ -2462,7 +2482,7 @@ fetch("/whoami").then(function(r){return r.json()}).then(function(d){
   }
   var mvb=document.getElementById("my-view-btn");
   if(mvb&&d.user){mvb.href="/admin/impersonate?as="+encodeURIComponent(d.user);}
-  if(d.isManager){var tt=document.getElementById("team-tab");if(tt)tt.style.display="";}
+  if(d.isManager||d.isSuperAdmin){var tt=document.getElementById("team-tab");if(tt)tt.style.display="";}
 }).catch(function(){})
 </script>
 <!-- Model pricing modal (shared across pages) -->

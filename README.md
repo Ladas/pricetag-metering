@@ -59,6 +59,18 @@ kubectl apply -f deploy/
 | `ROLLUP_REFRESH_SECONDS` | No | `300` | Maintenance interval for recent-hour rebuilds and standing parity checks. Monitor `/api/v1/admin/rollups` for refresh lag when live writes are disabled. |
 | `ADMIN_USERS` | No | — | Break-glass admin identities used only when the Partner identity store cannot be read. This does not grant access to an unprovisioned or demoted user while the store is healthy. |
 | `SUPERADMIN_USERS` | No | — | Break-glass operator identities used only when the Partner identity store cannot be read. Seed an active `super_admin` row in `partner_users` before first protected deployment. |
+| `OIDC_ENABLED` | No | `false` | Enables the optional corporate SSO login. Keep disabled until the issuer, redirect URI, and rollout are reviewed. |
+| `OIDC_ISSUER_URL` | When OIDC is enabled | — | Exact corporate OIDC issuer URL used for discovery and issuer validation. |
+| `OIDC_CLIENT_ID` | When OIDC is enabled | — | Confidential OIDC client ID. |
+| `OIDC_CLIENT_SECRET` | When OIDC is enabled | — | Confidential OIDC client secret; inject from a deployment Secret, never commit it. |
+| `OIDC_REDIRECT_URL` | When OIDC is enabled | — | Must exactly match the registered callback, for example `/oauth/callback`. |
+| `OIDC_POST_LOGOUT_REDIRECT_URL` | No | — | Must be registered with the provider. Sent as `post_logout_redirect_uri` after RP-initiated logout; leave empty to use the provider's own signed-out page. |
+| `OIDC_SCOPES` | No | `openid profile email groups` | Space- or comma-separated OIDC scopes. |
+| `SESSION_SECRET` | When OIDC is enabled | — | Signs session and OIDC state cookies. Inject a long random value from a deployment Secret; without it sessions do not survive a restart and SSO logins are invalidated. |
+| `SESSION_COOKIE_SECURE` | No | `true` | Keep enabled in shared/stage/production. Set `false` only for local HTTP testing. |
+| `OIDC_DEVELOPMENT_MODE` | No | `false` | Explicit local/stage-only gate required before enabling OIDC diagnostics or test personas. Keep `false` in production. |
+| `OIDC_TEST_LOGIN` | No | `false` | Shows the mock-IdP persona picker. Requires `OIDC_DEVELOPMENT_MODE=true` **and** a loopback request host; it is never shown on a shared dashboard hostname. |
+| `OIDC_CLAIMS_DEBUG` | No | `false` | Development/stage-only diagnostic page after OIDC callback. Requires `OIDC_DEVELOPMENT_MODE=true`; never enable in production. |
 
 ## CloudEvents Format
 

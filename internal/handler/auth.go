@@ -2,15 +2,16 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -43,17 +44,30 @@ type AuthHandler struct {
 	cfg        config.Config
 	secret     []byte
 	httpClient *http.Client
+	oidc       *oidcProvider
 	// orgStore backs the post-login manager redirect: people whose directory
 	// record has reports land on /manager, the view they actually came for.
 	// Optional — a nil store (or a lookup failure) keeps the old behaviour
 	// and lands everyone on /dashboard.
-	orgStore *storage.Store
+	orgStore  *storage.Store
+	oidcStore oidcPartnerStore
+}
+
+type oidcPartnerStore interface {
+	GetPartnerUser(context.Context, string) (storage.PartnerUser, error)
+	CurrentPartnerUserLogin(context.Context, string) (string, error)
+	PatchPartnerUser(context.Context, string, string, map[string]any) (storage.PartnerUser, error)
 }
 
 // SetOrgStore wires the directory lookup used by the login redirect. Kept a
 // setter so login stays constructible without a database (tests, lite
 // deployments).
-func (h *AuthHandler) SetOrgStore(s *storage.Store) { h.orgStore = s }
+func (h *AuthHandler) SetOrgStore(s *storage.Store) {
+	h.orgStore = s
+	h.oidcStore = s
+}
+
+func (h *AuthHandler) setOIDCPartnerStore(s oidcPartnerStore) { h.oidcStore = s }
 
 func NewAuthHandler(cfg config.Config) *AuthHandler {
 	secret := []byte(os.Getenv("SESSION_SECRET"))
@@ -99,7 +113,7 @@ func (h *AuthHandler) setCookie(w http.ResponseWriter, username string, groups [
 		Path:     "/",
 		MaxAge:   int(cookieMaxAge.Seconds()),
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   h.cfg.SessionCookieSecure,
 		SameSite: http.SameSiteLaxMode,
 	})
 }
@@ -136,6 +150,18 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			http.Error(w, "login page not found", http.StatusInternalServerError)
 			return
+		}
+		if h.oidc != nil {
+			data = bytes.Replace(data, []byte("<!-- OIDC_LOGIN -->"), []byte(`<a class="sso-button" href="/oauth/login">Sign in with Red Hat SSO</a>`), 1)
+		} else {
+			data = bytes.Replace(data, []byte("<!-- OIDC_LOGIN -->"), nil, 1)
+		}
+		// Local/demo shortcuts only: the mock IdP picker is shown below the
+		// production SSO link when explicitly enabled.
+		if h.oidcTestLoginAllowed(r) {
+			data = bytes.Replace(data, []byte("<!-- TEST_LOGIN -->"), testLoginPanel, 1)
+		} else {
+			data = bytes.Replace(data, []byte("<!-- TEST_LOGIN -->"), nil, 1)
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
@@ -197,11 +223,12 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, h.loginDestination(r, result.Username), http.StatusFound)
 }
 
-// loginDestination is where a successful login lands. Admins keep the Usage
-// page; a manager (someone with direct reports in partner_users) goes straight
-// to their team view. The legacy org directory is intentionally not consulted:
-// partner_users is the single identity source. Users only in the legacy
-// directory land on /dashboard (their own usage). Fails closed to /dashboard.
+// loginDestination is where a successful login lands. Admins land on the
+// org-wide Usage page; a manager (someone with direct reports in
+// partner_users) goes straight to their team view; everyone else lands on
+// their personal My usage page (which also carries the API Keys tab). The
+// legacy org directory is intentionally not consulted: partner_users is the
+// single identity source. Fails closed to /dashboard.
 func (h *AuthHandler) loginDestination(r *http.Request, username string) string {
 	if h.orgStore == nil {
 		return "/dashboard"
@@ -213,7 +240,7 @@ func (h *AuthHandler) loginDestination(r *http.Request, username string) string 
 	if _, isManager, err := h.orgStore.PartnerManagerScope(r.Context(), username); err == nil && isManager {
 		return "/manager"
 	}
-	return "/dashboard"
+	return "/account"
 }
 
 // HandleImpersonate lets a super-admin open another user's view. With
@@ -263,10 +290,35 @@ func (h *AuthHandler) HandleLogout(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   h.cfg.SessionCookieSecure,
 		SameSite: http.SameSiteLaxMode,
 	})
+	if h.oidc != nil && h.oidc.endSessionURL != "" {
+		if target, err := h.oidcLogoutURL(); err == nil {
+			http.Redirect(w, r, target, http.StatusFound)
+			return
+		}
+	}
 	http.Redirect(w, r, "/login", http.StatusFound)
+}
+
+// oidcLogoutURL is the provider's RP-initiated logout endpoint. The return
+// URI comes from configuration, not the request Host, so it cannot become an
+// open redirect.
+func (h *AuthHandler) oidcLogoutURL() (string, error) {
+	target, err := url.Parse(h.oidc.endSessionURL)
+	if err != nil {
+		return "", err
+	}
+	query := target.Query()
+	if h.cfg.OIDC.ClientID != "" {
+		query.Set("client_id", h.cfg.OIDC.ClientID)
+	}
+	if redirect := strings.TrimSpace(h.cfg.OIDC.PostLogoutRedirectURL); redirect != "" {
+		query.Set("post_logout_redirect_uri", redirect)
+	}
+	target.RawQuery = query.Encode()
+	return target.String(), nil
 }
 
 // RequireAuth gates a handler behind a valid session cookie. On success it
@@ -280,9 +332,21 @@ func (h *AuthHandler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
+		// Never trust identity headers supplied by the client. Clear every
+		// identity header this layer sets, then rebuild it from the signed
+		// session. Without the deletes, a valid session with no groups could
+		// smuggle a group through to the key-minting path.
+		r.Header.Del(h.cfg.UserHeader)
+		r.Header.Del(h.cfg.GroupsHeader)
+		r.Header.Del(realUserHeader)
 		r.Header.Set(h.cfg.UserHeader, session.Username)
 		if len(session.Groups) > 0 {
-			r.Header.Set(h.cfg.GroupsHeader, fmt.Sprintf(`["%s"]`, strings.Join(session.Groups, `","`)))
+			groups, err := json.Marshal(session.Groups)
+			if err != nil {
+				http.Error(w, "invalid session groups", http.StatusInternalServerError)
+				return
+			}
+			r.Header.Set(h.cfg.GroupsHeader, string(groups))
 		}
 		// Admin "view as" mode: swap the identity header to the target user
 		// so every downstream handler (per-user scoping, Partner role checks) behaves

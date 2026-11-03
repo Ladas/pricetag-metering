@@ -53,19 +53,40 @@ func NewClient(baseURL, tenant string) *Client {
 	}
 }
 
+// CreateKeyRequest is the self-service key shape. ExpiresIn is a Go duration
+// string ("2160h"); an empty value means the MaaS deployment default.
+type CreateKeyRequest struct {
+	Name         string            `json:"name"`
+	Description  string            `json:"description,omitempty"`
+	Subscription string            `json:"subscription,omitempty"`
+	ExpiresIn    string            `json:"expiresIn,omitempty"`
+	Labels       map[string]string `json:"labels,omitempty"`
+}
+
 func (c *Client) CreateAPIKey(ctx context.Context, username, group, keyName string) (*APIKeyResponse, error) {
+	return c.CreateUserAPIKey(ctx, username, group, CreateKeyRequest{Name: keyName})
+}
+
+// CreateUserAPIKey mints a key for one user with optional expiry and labels.
+// The identity headers are the trusted-header contract described in the
+// Atlas handoff; the caller must be a server-side handler, never a browser.
+func (c *Client) CreateUserAPIKey(ctx context.Context, username, group string, req CreateKeyRequest) (*APIKeyResponse, error) {
 	username = strings.TrimSpace(username)
-	body, _ := json.Marshal(map[string]string{"name": keyName})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/api-keys", bytes.NewReader(body))
+	body, _ := json.Marshal(req)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/api-keys", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-MaaS-Username", username)
-	req.Header.Set("X-MaaS-Group", fmt.Sprintf(`["%s"]`, group))
-	req.Header.Set("X-MaaS-Tenant", c.tenant)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("X-MaaS-Username", username)
+	groupJSON, err := json.Marshal([]string{group})
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("X-MaaS-Group", string(groupJSON))
+	httpReq.Header.Set("X-MaaS-Tenant", c.tenant)
 
-	resp, err := c.client.Do(req)
+	resp, err := c.client.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("maas-api request failed: %w", err)
 	}
@@ -73,7 +94,9 @@ func (c *Client) CreateAPIKey(ctx context.Context, username, group, keyName stri
 
 	data, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("maas-api error %d: %s", resp.StatusCode, string(data))
+		// Never put the upstream response body in an error: handlers log errors,
+		// and MaaS bodies can echo request context or key material.
+		return nil, fmt.Errorf("maas-api key create failed with status %d", resp.StatusCode)
 	}
 
 	var result APIKeyResponse
@@ -209,9 +232,9 @@ func (c *Client) SearchAPIKeys(ctx context.Context, username string, groups []st
 	defer resp.Body.Close()
 
 	data, _ := io.ReadAll(resp.Body)
-	slog.Info("maas-api search response", "status", resp.StatusCode, "body", string(data), "url", c.baseURL+"/v1/api-keys/search")
+	slog.Info("maas-api search response", "status", resp.StatusCode)
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("maas-api error %d: %s", resp.StatusCode, string(data))
+		return nil, fmt.Errorf("maas-api key search failed with status %d", resp.StatusCode)
 	}
 
 	var result SearchResult
@@ -245,8 +268,7 @@ func (c *Client) RevokeAPIKey(ctx context.Context, keyID string, groups []string
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		data, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("maas-api error %d: %s", resp.StatusCode, string(data))
+		return fmt.Errorf("maas-api key revoke failed with status %d", resp.StatusCode)
 	}
 	return nil
 }
