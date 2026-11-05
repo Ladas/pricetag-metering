@@ -368,3 +368,32 @@ func TestSetQosConfigAllowsZeroCacheReadWeight(t *testing.T) {
 		t.Fatalf("negative cache read weight = %v, want default 0.05", cfg.CacheReadWeight)
 	}
 }
+
+func TestQosKeyAliases(t *testing.T) {
+	cfg := qosTestConfig()
+	cfg.KeyAliasPremium = "premium"
+	cfg.KeyAliasMain = "main"
+	cfg.KeyAliasRatelimit = "main"
+	if got := qosKeyAlias(QosPremium, cfg); got != "premium" {
+		t.Fatalf("premium alias = %q", got)
+	}
+	if got := qosKeyAlias(QosMain, cfg); got != "main" {
+		t.Fatalf("main alias = %q", got)
+	}
+	if got := qosKeyAlias(QosRatelimit, cfg); got != "main" {
+		t.Fatalf("ratelimit alias = %q", got)
+	}
+}
+
+func TestQuotaRetryAfter(t *testing.T) {
+	if got := quotaRetryAfter(""); got != 30 {
+		t.Fatalf("empty month end retry = %d, want 30", got)
+	}
+	if got := quotaRetryAfter("not-a-date"); got != 30 {
+		t.Fatalf("invalid month end retry = %d, want 30", got)
+	}
+	end := time.Now().UTC().Add(2 * time.Hour).Format(time.RFC3339)
+	if got := quotaRetryAfter(end); got < 7100 || got > 7300 {
+		t.Fatalf("two-hour retry = %d, want ~7200", got)
+	}
+}

@@ -129,6 +129,9 @@ func main() {
 		Providers:           cfg.QosProviders,
 		ExemptTagKey:        cfg.QosExemptTagKey,
 		ExemptTagValue:      cfg.QosExemptTagValue,
+		KeyAliasPremium:     cfg.QosKeyAliasPremium,
+		KeyAliasMain:        cfg.QosKeyAliasMain,
+		KeyAliasRatelimit:   cfg.QosKeyAliasRatelimit,
 	})
 	if cfg.DashboardUseRollups && !cfg.LiveRollupsEnabled {
 		slog.Warn("dashboard rollups are eventually consistent because live writes are disabled", "refresh_interval_seconds", cfg.RollupRefreshSeconds)

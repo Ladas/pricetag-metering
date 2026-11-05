@@ -257,6 +257,11 @@ type Config struct {
 	// tags contain the configured key/value (for example origin=loadtest).
 	QosExemptTagKey   string
 	QosExemptTagValue string
+	// QosKeyAlias* map the final class to the gateway's local key-ring
+	// alias. The aliases name keys; they never contain key material.
+	QosKeyAliasPremium   string
+	QosKeyAliasMain      string
+	QosKeyAliasRatelimit string
 
 	KeyService KeyService
 	Kubernetes Kubernetes
@@ -472,6 +477,9 @@ func Load() Config {
 		QosProviders:             qosProviders(),
 		QosExemptTagKey:          envDefault("QOS_EXEMPT_TAG_KEY", "origin"),
 		QosExemptTagValue:        envDefault("QOS_EXEMPT_TAG_VALUE", "loadtest"),
+		QosKeyAliasPremium:       envDefault("QOS_KEY_ALIAS_PREMIUM", "premium"),
+		QosKeyAliasMain:          envDefault("QOS_KEY_ALIAS_MAIN", "main"),
+		QosKeyAliasRatelimit:     envDefault("QOS_KEY_ALIAS_RATELIMIT", "main"),
 		KeyService: KeyService{
 			URL:                strings.TrimSuffix(os.Getenv("KEY_SERVICE_URL"), "/"),
 			UserHeader:         envDefault("KEY_SERVICE_USER_HEADER", "X-Auth-Username"),

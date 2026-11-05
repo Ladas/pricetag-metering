@@ -71,6 +71,13 @@ type UsageStats struct {
 	QosHoldWindowTokens int64  `json:"qosHoldWindowTokens,omitempty"`
 	QosRetryAfter       int    `json:"qosRetryAfter,omitempty"`
 	QosSubject          string `json:"qosSubject,omitempty"`
+
+	// PolicyDecision is the complete gateway decision. The legacy fields
+	// above remain for old consumers; the new fields are additive.
+	Allowed         bool   `json:"allowed"`
+	DenyReason      string `json:"denyReason,omitempty"`
+	QuotaRetryAfter int    `json:"quotaRetryAfter,omitempty"`
+	QosKeyAlias     string `json:"qosKeyAlias,omitempty"`
 }
 
 type Store struct {
@@ -557,12 +564,37 @@ func (s *Store) GetMonthlyUsage(ctx context.Context, username, model string, exe
 	if cached {
 		cachedLabel = "true"
 	}
+	stats.Allowed = stats.ModelAllowed && stats.HasAccess
+	if !stats.ModelAllowed {
+		stats.DenyReason = "model_not_allowed"
+	} else if !stats.HasAccess {
+		stats.DenyReason = "quota_exhausted"
+		stats.QuotaRetryAfter = quotaRetryAfter(stats.MonthEnds)
+	}
+	if s.qosEnabled.Load() {
+		stats.QosKeyAlias = qosKeyAlias(stats.QosClass, s.qosConfig)
+	}
 	if stats.HasAccess {
 		metrics.QuotaChecksTotal.WithLabelValues("allowed", cachedLabel).Inc()
 	} else {
 		metrics.QuotaChecksTotal.WithLabelValues("denied", cachedLabel).Inc()
 	}
 	return stats, nil
+}
+
+func quotaRetryAfter(monthEnds string) int {
+	if monthEnds == "" {
+		return 30
+	}
+	end, err := time.Parse(time.RFC3339, monthEnds)
+	if err != nil {
+		return 30
+	}
+	seconds := int(time.Until(end).Seconds())
+	if seconds < 1 {
+		return 1
+	}
+	return seconds
 }
 
 // computeUsageStats derives entitlement stats from token usage and a quota.
