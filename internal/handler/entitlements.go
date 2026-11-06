@@ -86,6 +86,8 @@ func (h *EntitlementsHandler) HandleEntitlement(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// The gateway's enmaas_policy filter consumes the decision fields in
+	// addition to hasAccess; keep this response additive and JSON-encoded.
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
 

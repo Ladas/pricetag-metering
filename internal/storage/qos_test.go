@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -264,6 +265,11 @@ func insertQosUsage(t *testing.T, store *Store, username string, ts time.Time, p
 
 func insertQosUsageProvider(t *testing.T, store *Store, username, provider string, ts time.Time, prompt, cached, cacheWrite, completion int) {
 	t.Helper()
+	insertQosUsageProviderModel(t, store, username, provider, "rits/zai-org/glm-5-3", ts, prompt, cached, cacheWrite, completion)
+}
+
+func insertQosUsageProviderModel(t *testing.T, store *Store, username, provider, model string, ts time.Time, prompt, cached, cacheWrite, completion int) {
+	t.Helper()
 	_, err := store.db.ExecContext(context.Background(), `
 		INSERT INTO usage_events
 			(event_id, timestamp, username, provider, model,
@@ -271,7 +277,7 @@ func insertQosUsageProvider(t *testing.T, store *Store, username, provider strin
 			 cached_input_tokens, cache_creation_tokens, reasoning_tokens)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0)`,
 		fmt.Sprintf("qos-test-%d-%d", time.Now().UnixNano(), prompt),
-		ts, username, provider, "rits/zai-org/glm-5-3",
+		ts, username, provider, model,
 		prompt, completion, prompt+completion, cached, cacheWrite)
 	if err != nil {
 		t.Fatalf("insert usage event: %v", err)
@@ -371,29 +377,176 @@ func TestSetQosConfigAllowsZeroCacheReadWeight(t *testing.T) {
 
 func TestQosKeyAliases(t *testing.T) {
 	cfg := qosTestConfig()
-	cfg.KeyAliasPremium = "premium"
-	cfg.KeyAliasMain = "main"
-	cfg.KeyAliasRatelimit = "main"
-	if got := qosKeyAlias(QosPremium, cfg); got != "premium" {
+	cfg.KeyAliasPremium = "premium-key"
+	cfg.KeyAliasMain = "main-key"
+	cfg.KeyAliasRatelimit = "ratelimit-key"
+	if got := qosKeyAlias(QosPremium, cfg); got != "premium-key" {
 		t.Fatalf("premium alias = %q", got)
 	}
-	if got := qosKeyAlias(QosMain, cfg); got != "main" {
+	if got := qosKeyAlias(QosMain, cfg); got != "main-key" {
 		t.Fatalf("main alias = %q", got)
 	}
-	if got := qosKeyAlias(QosRatelimit, cfg); got != "main" {
+	if got := qosKeyAlias(QosRatelimit, cfg); got != "ratelimit-key" {
 		t.Fatalf("ratelimit alias = %q", got)
+	}
+	if got := qosKeyAlias("unknown", cfg); got != "main-key" {
+		t.Fatalf("unknown class alias = %q, want main-key", got)
+	}
+}
+
+func TestSetQosConfigKeyAliasDefaults(t *testing.T) {
+	var store Store
+	store.SetQosConfig(QosConfig{Enabled: true})
+	store.qosMu.Lock()
+	cfg := store.qosConfig
+	store.qosMu.Unlock()
+	if cfg.KeyAliasPremium != "premium" || cfg.KeyAliasMain != "main" || cfg.KeyAliasRatelimit != "main" {
+		t.Fatalf("default aliases = %q/%q/%q, want premium/main/main",
+			cfg.KeyAliasPremium, cfg.KeyAliasMain, cfg.KeyAliasRatelimit)
 	}
 }
 
 func TestQuotaRetryAfter(t *testing.T) {
-	if got := quotaRetryAfter(""); got != 30 {
-		t.Fatalf("empty month end retry = %d, want 30", got)
+	if got := quotaRetryAfter(""); got != 3600 {
+		t.Fatalf("empty month end retry = %d, want 3600", got)
 	}
-	if got := quotaRetryAfter("not-a-date"); got != 30 {
-		t.Fatalf("invalid month end retry = %d, want 30", got)
+	if got := quotaRetryAfter("not-a-date"); got != 3600 {
+		t.Fatalf("invalid month end retry = %d, want 3600", got)
 	}
 	end := time.Now().UTC().Add(2 * time.Hour).Format(time.RFC3339)
 	if got := quotaRetryAfter(end); got < 7100 || got > 7300 {
 		t.Fatalf("two-hour retry = %d, want ~7200", got)
 	}
+}
+
+func TestGetMonthlyUsageDecisionContract(t *testing.T) {
+	t.Run("allowed and QoS disabled", func(t *testing.T) {
+		store, ctx := openTestStore(t)
+		stats, err := store.GetMonthlyUsage(ctx, "contract-allowed@example.com", "model-a", false)
+		if err != nil {
+			t.Fatalf("GetMonthlyUsage: %v", err)
+		}
+		if !stats.Allowed || stats.DenyReason != "" || stats.QuotaRetryAfter != 0 {
+			t.Fatalf("allowed contract = %+v", stats)
+		}
+		encoded, err := json.Marshal(stats)
+		if err != nil {
+			t.Fatalf("marshal allowed stats: %v", err)
+		}
+		var body map[string]any
+		if err := json.Unmarshal(encoded, &body); err != nil {
+			t.Fatalf("unmarshal allowed stats: %v", err)
+		}
+		if got := body["allowed"]; got != true {
+			t.Fatalf("allowed JSON = %v, want true: %s", got, encoded)
+		}
+		for _, key := range []string{"denyReason", "quotaRetryAfter", "qosKeyAlias"} {
+			if _, ok := body[key]; ok {
+				t.Fatalf("%s present on allowed response: %s", key, encoded)
+			}
+		}
+	})
+
+	t.Run("model denial", func(t *testing.T) {
+		store, ctx := openTestStore(t)
+		userID := "77777777-7777-7777-7777-777777777777"
+		email := "contract-model@example.com"
+		if _, err := store.CreatePartnerUser(ctx, "test", userID, map[string]any{
+			"email": email, "first_name": "Contract", "last_name": "QoS",
+		}); err != nil {
+			t.Fatalf("CreatePartnerUser: %v", err)
+		}
+		if _, err := store.SetPartnerUserModelAllowlist(ctx, "test", userID, []string{}); err != nil {
+			t.Fatalf("SetPartnerUserModelAllowlist: %v", err)
+		}
+		stats, err := store.GetMonthlyUsage(ctx, email, "model-a", false)
+		if err != nil {
+			t.Fatalf("GetMonthlyUsage: %v", err)
+		}
+		if stats.Allowed || stats.DenyReason != "model_not_allowed" || stats.QuotaRetryAfter != 0 {
+			t.Fatalf("model denial contract = %+v", stats)
+		}
+	})
+
+	t.Run("quota denial", func(t *testing.T) {
+		store, ctx := openTestStore(t)
+		email := "contract-quota@example.com"
+		limit := 0.01
+		enforced := true
+		if _, err := store.UpdateQuotaPolicy(ctx, "test", QuotaPolicyUpdate{DefaultMonthlyUSD: &limit, Enforced: &enforced}); err != nil {
+			t.Fatalf("UpdateQuotaPolicy: %v", err)
+		}
+		insertQosUsageProviderModel(t, store, email, "openai", "gpt-4o-mini", time.Now().Add(-time.Second), 1_000_000, 0, 0, 0)
+		stats, err := store.GetMonthlyUsage(ctx, email, "gpt-4o-mini", false)
+		if err != nil {
+			t.Fatalf("GetMonthlyUsage: %v", err)
+		}
+		if stats.Allowed || stats.DenyReason != "quota_exhausted" || stats.QuotaRetryAfter <= 0 {
+			t.Fatalf("quota denial contract = %+v", stats)
+		}
+	})
+
+	t.Run("QoS enabled alias", func(t *testing.T) {
+		store, ctx := openTestStore(t)
+		cfg := qosTestConfig()
+		cfg.KeyAliasPremium = "premium-key"
+		cfg.KeyAliasMain = "main-key"
+		cfg.KeyAliasRatelimit = "ratelimit-key"
+		store.SetQosConfig(cfg)
+		userID := "99999999-9999-9999-9999-999999999999"
+		email := "contract-qos@example.com"
+		if _, err := store.CreatePartnerUser(ctx, "test", userID, map[string]any{
+			"email": email, "first_name": "Contract", "last_name": "Model",
+		}); err != nil {
+			t.Fatalf("CreatePartnerUser: %v", err)
+		}
+		insertQosUsage(t, store, email, time.Now().Add(-time.Second), 700_000, 0, 0, 0)
+		stats, err := store.GetMonthlyUsage(ctx, email, "rits/zai-org/glm-5-3", false)
+		if err != nil {
+			t.Fatalf("GetMonthlyUsage: %v", err)
+		}
+		if stats.QosClass != QosMain || stats.QosKeyAlias != "main-key" {
+			t.Fatalf("QoS contract = class %q alias %q", stats.QosClass, stats.QosKeyAlias)
+		}
+	})
+
+	t.Run("QoS premium and ratelimit aliases", func(t *testing.T) {
+		store, ctx := openTestStore(t)
+		cfg := qosTestConfig()
+		cfg.KeyAliasPremium = "premium-key"
+		cfg.KeyAliasMain = "main-key"
+		cfg.KeyAliasRatelimit = "ratelimit-key"
+		store.SetQosConfig(cfg)
+
+		premiumID := "88888888-8888-8888-8888-888888888888"
+		premiumEmail := "contract-premium@example.com"
+		if _, err := store.CreatePartnerUser(ctx, "test", premiumID, map[string]any{
+			"email": premiumEmail, "first_name": "Contract", "last_name": "Premium", "origin": "loadtest",
+		}); err != nil {
+			t.Fatalf("CreatePartnerUser premium: %v", err)
+		}
+		premium, err := store.GetMonthlyUsage(ctx, premiumEmail, "rits/zai-org/glm-5-3", false)
+		if err != nil {
+			t.Fatalf("GetMonthlyUsage premium: %v", err)
+		}
+		if premium.QosClass != QosPremium || premium.QosKeyAlias != "premium-key" {
+			t.Fatalf("premium contract = class %q alias %q", premium.QosClass, premium.QosKeyAlias)
+		}
+
+		ratelimitID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+		ratelimitEmail := "contract-ratelimit@example.com"
+		if _, err := store.CreatePartnerUser(ctx, "test", ratelimitID, map[string]any{
+			"email": ratelimitEmail, "first_name": "Contract", "last_name": "Ratelimit",
+		}); err != nil {
+			t.Fatalf("CreatePartnerUser ratelimit: %v", err)
+		}
+		insertQosUsage(t, store, ratelimitEmail, time.Now().Add(-time.Second), 2_100_000, 0, 0, 0)
+		ratelimit, err := store.GetMonthlyUsage(ctx, ratelimitEmail, "rits/zai-org/glm-5-3", false)
+		if err != nil {
+			t.Fatalf("GetMonthlyUsage ratelimit: %v", err)
+		}
+		if ratelimit.QosClass != QosRatelimit || ratelimit.QosKeyAlias != "ratelimit-key" {
+			t.Fatalf("ratelimit contract = class %q alias %q", ratelimit.QosClass, ratelimit.QosKeyAlias)
+		}
+	})
 }

@@ -52,6 +52,22 @@ kubectl apply -f deploy/
 | `PORT` | No | `8080` | HTTP listen port |
 | `MONTHLY_TOKEN_QUOTA` | No | `100000000` | Legacy per-user monthly token safety net for the entitlement endpoint. The gateway enforces the response; set a non-positive value only for explicitly unlimited deployments. |
 | `QUOTA_ENFORCEMENT_ENABLED` | No | `false` | Controls dollar/token quota blocking. Usage accounting remains active; set `true` only after quota policy is ready. |
+| `QOS_ENABLED` | No | `false` | Enables weighted-token QoS classification and the `qosClass`/`qosKeyAlias` response fields. |
+| `QOS_PROVIDERS` | No | `cb-glm` | Comma-separated usage providers counted toward the QoS windows. |
+| `QOS_WINDOW_SECONDS` | No | `60` | Short classification window. |
+| `QOS_HOLD_WINDOW_SECONDS` | No | `300` | Longer guard window that prevents rapid class flapping. |
+| `QOS_PREMIUM_MAX_TOKENS` | No | `600000` | Short-window premium/main boundary in weighted tokens. |
+| `QOS_RATELIMIT_MIN_TOKENS` | No | `2000000` | Short-window main/ratelimit boundary in weighted tokens. |
+| `QOS_HOLD_MAIN_TOKENS` | No | `3000000` | Hold-window premium/main boundary in weighted tokens. |
+| `QOS_HOLD_RATELIMIT_TOKENS` | No | `10000000` | Hold-window main/ratelimit boundary in weighted tokens. |
+| `QOS_CACHE_READ_WEIGHT` | No | `0.05` | Weight applied to cached input tokens in QoS accounting. |
+| `QOS_CLASS_CACHE_SECONDS` | No | `15` | Maximum staleness of the short-window class cache. |
+| `QOS_HOLD_CACHE_SECONDS` | No | `60` | Maximum staleness of the hold-window cache. |
+| `QOS_EXEMPT_TAG_KEY` | No | `origin` | Partner-user tag key that exempts a user from QoS. |
+| `QOS_EXEMPT_TAG_VALUE` | No | `loadtest` | Tag value that triggers the QoS exemption. |
+| `QOS_KEY_ALIAS_PREMIUM` | No | `premium` | Gateway key-ring alias for the premium class. |
+| `QOS_KEY_ALIAS_MAIN` | No | `main` | Gateway key-ring alias for the main class. |
+| `QOS_KEY_ALIAS_RATELIMIT` | No | `main` | Gateway key-ring alias for the ratelimit class. |
 | `M2M_AUTH_REQUIRED` | No | `false` | Require a bearer token on gateway-to-metering endpoints. Enable only with matching gateway header injection. |
 | `M2M_SHARED_SECRET` | No | — | Runtime secret compared against the M2M bearer token; never commit it. Required when `M2M_AUTH_REQUIRED=true`. |
 | `DASHBOARD_USE_ROLLUPS` | No | `false` | Serve aggregate dashboard panels from `usage_hourly` after backfill and parity are green. The raw path remains the rollback switch. |
@@ -71,6 +87,16 @@ kubectl apply -f deploy/
 | `OIDC_DEVELOPMENT_MODE` | No | `false` | Explicit local/stage-only gate required before enabling OIDC diagnostics or test personas. Keep `false` in production. |
 | `OIDC_TEST_LOGIN` | No | `false` | Shows the mock-IdP persona picker. Requires `OIDC_DEVELOPMENT_MODE=true` **and** a loopback request host; it is never shown on a shared dashboard hostname. |
 | `OIDC_CLAIMS_DEBUG` | No | `false` | Development/stage-only diagnostic page after OIDC callback. Requires `OIDC_DEVELOPMENT_MODE=true`; never enable in production. |
+
+### QoS alias precedence
+
+When QoS is enabled, metering's `qosKeyAlias` is authoritative for the
+`enmaas_policy` gateway filter. The gateway's local `key_alias_*` settings are
+only a fallback for older metering responses or when QoS is disabled. If a
+deployment customizes gateway aliases, set the matching
+`QOS_KEY_ALIAS_PREMIUM`, `QOS_KEY_ALIAS_MAIN`, and
+`QOS_KEY_ALIAS_RATELIMIT` values on metering as well, and deploy the metering
+configuration before enabling gateway active-key selection.
 
 ## CloudEvents Format
 
