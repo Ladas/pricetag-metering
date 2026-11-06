@@ -419,6 +419,19 @@ func TestQuotaRetryAfter(t *testing.T) {
 	}
 }
 
+func usageStatsJSON(t *testing.T, stats UsageStats) map[string]any {
+	t.Helper()
+	encoded, err := json.Marshal(stats)
+	if err != nil {
+		t.Fatalf("marshal usage stats: %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(encoded, &body); err != nil {
+		t.Fatalf("unmarshal usage stats: %v", err)
+	}
+	return body
+}
+
 func TestGetMonthlyUsageDecisionContract(t *testing.T) {
 	t.Run("allowed and QoS disabled", func(t *testing.T) {
 		store, ctx := openTestStore(t)
@@ -429,20 +442,13 @@ func TestGetMonthlyUsageDecisionContract(t *testing.T) {
 		if !stats.Allowed || stats.DenyReason != "" || stats.QuotaRetryAfter != 0 {
 			t.Fatalf("allowed contract = %+v", stats)
 		}
-		encoded, err := json.Marshal(stats)
-		if err != nil {
-			t.Fatalf("marshal allowed stats: %v", err)
-		}
-		var body map[string]any
-		if err := json.Unmarshal(encoded, &body); err != nil {
-			t.Fatalf("unmarshal allowed stats: %v", err)
-		}
+		body := usageStatsJSON(t, stats)
 		if got := body["allowed"]; got != true {
-			t.Fatalf("allowed JSON = %v, want true: %s", got, encoded)
+			t.Fatalf("allowed JSON = %v, want true", got)
 		}
 		for _, key := range []string{"denyReason", "quotaRetryAfter", "qosKeyAlias"} {
 			if _, ok := body[key]; ok {
-				t.Fatalf("%s present on allowed response: %s", key, encoded)
+				t.Fatalf("%s present on allowed response: %v", key, body)
 			}
 		}
 	})
@@ -466,6 +472,13 @@ func TestGetMonthlyUsageDecisionContract(t *testing.T) {
 		if stats.Allowed || stats.DenyReason != "model_not_allowed" || stats.QuotaRetryAfter != 0 {
 			t.Fatalf("model denial contract = %+v", stats)
 		}
+		body := usageStatsJSON(t, stats)
+		if body["allowed"] != false || body["denyReason"] != "model_not_allowed" {
+			t.Fatalf("model denial JSON = %v", body)
+		}
+		if _, ok := body["quotaRetryAfter"]; ok {
+			t.Fatalf("model denial included quotaRetryAfter: %v", body)
+		}
 	})
 
 	t.Run("quota denial", func(t *testing.T) {
@@ -483,6 +496,14 @@ func TestGetMonthlyUsageDecisionContract(t *testing.T) {
 		}
 		if stats.Allowed || stats.DenyReason != "quota_exhausted" || stats.QuotaRetryAfter <= 0 {
 			t.Fatalf("quota denial contract = %+v", stats)
+		}
+		body := usageStatsJSON(t, stats)
+		if body["allowed"] != false || body["denyReason"] != "quota_exhausted" {
+			t.Fatalf("quota denial JSON = %v", body)
+		}
+		retry, ok := body["quotaRetryAfter"].(float64)
+		if !ok || retry <= 0 {
+			t.Fatalf("quota denial quotaRetryAfter = %v", body["quotaRetryAfter"])
 		}
 	})
 
@@ -521,10 +542,11 @@ func TestGetMonthlyUsageDecisionContract(t *testing.T) {
 		premiumID := "88888888-8888-8888-8888-888888888888"
 		premiumEmail := "contract-premium@example.com"
 		if _, err := store.CreatePartnerUser(ctx, "test", premiumID, map[string]any{
-			"email": premiumEmail, "first_name": "Contract", "last_name": "Premium", "origin": "loadtest",
+			"email": premiumEmail, "first_name": "Contract", "last_name": "Premium",
 		}); err != nil {
 			t.Fatalf("CreatePartnerUser premium: %v", err)
 		}
+		insertQosUsage(t, store, premiumEmail, time.Now().Add(-time.Second), 50_000, 0, 0, 0)
 		premium, err := store.GetMonthlyUsage(ctx, premiumEmail, "rits/zai-org/glm-5-3", false)
 		if err != nil {
 			t.Fatalf("GetMonthlyUsage premium: %v", err)

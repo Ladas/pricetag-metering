@@ -303,3 +303,24 @@ func TestValidateRejectsInvalidMeteringMode(t *testing.T) {
 			cfg.MeteringMode.ServesAPIRoutes(), cfg.MeteringMode.RunsMaintenance())
 	}
 }
+
+func TestQosKeyAliasConfiguration(t *testing.T) {
+	keys := []string{"QOS_KEY_ALIAS_PREMIUM", "QOS_KEY_ALIAS_MAIN", "QOS_KEY_ALIAS_RATELIMIT"}
+	for _, key := range keys {
+		unsetEnv(t, key)
+	}
+	cfg := Load()
+	if cfg.QosKeyAliasPremium != "premium" || cfg.QosKeyAliasMain != "main" || cfg.QosKeyAliasRatelimit != "main" {
+		t.Fatalf("alias defaults = %q/%q/%q, want premium/main/main",
+			cfg.QosKeyAliasPremium, cfg.QosKeyAliasMain, cfg.QosKeyAliasRatelimit)
+	}
+
+	t.Setenv("QOS_KEY_ALIAS_PREMIUM", "premium-key")
+	t.Setenv("QOS_KEY_ALIAS_MAIN", "main-key")
+	t.Setenv("QOS_KEY_ALIAS_RATELIMIT", "ratelimit-key")
+	cfg = Load()
+	if cfg.QosKeyAliasPremium != "premium-key" || cfg.QosKeyAliasMain != "main-key" || cfg.QosKeyAliasRatelimit != "ratelimit-key" {
+		t.Fatalf("alias overrides = %q/%q/%q, want premium-key/main-key/ratelimit-key",
+			cfg.QosKeyAliasPremium, cfg.QosKeyAliasMain, cfg.QosKeyAliasRatelimit)
+	}
+}
