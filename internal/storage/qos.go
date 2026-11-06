@@ -45,6 +45,9 @@ type QosConfig struct {
 	Providers           []string
 	ExemptTagKey        string
 	ExemptTagValue      string
+	KeyAliasPremium     string
+	KeyAliasMain        string
+	KeyAliasRatelimit   string
 }
 
 // QosStatus is the per-request classification result. Subject is the
@@ -91,6 +94,15 @@ func (s *Store) SetQosConfig(cfg QosConfig) {
 	}
 	if len(cfg.Providers) == 0 {
 		cfg.Providers = []string{"cb-glm"}
+	}
+	if cfg.KeyAliasPremium == "" {
+		cfg.KeyAliasPremium = QosPremium
+	}
+	if cfg.KeyAliasMain == "" {
+		cfg.KeyAliasMain = QosMain
+	}
+	if cfg.KeyAliasRatelimit == "" {
+		cfg.KeyAliasRatelimit = QosMain
 	}
 	cfg.Providers = append([]string(nil), cfg.Providers...)
 	if cfg.PremiumMaxTokens <= 0 {
@@ -274,6 +286,17 @@ func (s *Store) queryQosTokens(ctx context.Context, username string, logins []st
 		cfg.CacheReadWeight,
 	).Scan(&windowTokens, &holdTokens)
 	return windowTokens, holdTokens, err
+}
+
+func qosKeyAlias(class string, cfg QosConfig) string {
+	switch class {
+	case QosPremium:
+		return cfg.KeyAliasPremium
+	case QosRatelimit:
+		return cfg.KeyAliasRatelimit
+	default:
+		return cfg.KeyAliasMain
+	}
 }
 
 func classifyQos(windowTokens, holdTokens int64, cfg QosConfig) string {

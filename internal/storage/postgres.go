@@ -39,11 +39,12 @@ type UsageEvent struct {
 	StatusCode *int
 }
 
-// UsageStats is the entitlement endpoint's response body. The gateway's
-// external_metering filter parses ONLY hasAccess (serde ignores every other
-// field), so the quota fields below are additive: safe for the deployed
-// filters, useful for the dashboard. A denial is a 429 in the gateway with a
-// fixed plaintext body — this JSON never reaches the client.
+// UsageStats is the entitlement endpoint's response body. The legacy
+// external_metering filter reads only hasAccess; the enmaas_policy filter
+// reads allowed, denyReason, quotaRetryAfter, qosClass, qosSubject, and
+// qosKeyAlias. The remaining fields are additive for the dashboard and older
+// consumers. A denial is returned by the gateway as a JSON error body, not by
+// this endpoint.
 type UsageStats struct {
 	HasAccess    bool    `json:"hasAccess"`
 	Balance      float64 `json:"balance"`
@@ -59,8 +60,8 @@ type UsageStats struct {
 	MonthEnds string  `json:"monthEnds"`
 
 	// OverLimitModel marks that this request passed via the post-cap model
-	// allowance (issue #22) rather than being under budget. Additive: the
-	// deployed gateway filter reads only hasAccess.
+	// allowance (issue #22) rather than being under budget. Additive for
+	// older consumers.
 	OverLimitModel bool `json:"overLimitModel,omitempty"`
 
 	// QoS classification is additive and independent of quota access. An
@@ -71,6 +72,13 @@ type UsageStats struct {
 	QosHoldWindowTokens int64  `json:"qosHoldWindowTokens,omitempty"`
 	QosRetryAfter       int    `json:"qosRetryAfter,omitempty"`
 	QosSubject          string `json:"qosSubject,omitempty"`
+
+	// PolicyDecision is the complete gateway decision. The legacy fields
+	// above remain for old consumers; the new fields are additive.
+	Allowed         bool   `json:"allowed"`
+	DenyReason      string `json:"denyReason,omitempty"`
+	QuotaRetryAfter int    `json:"quotaRetryAfter,omitempty"`
+	QosKeyAlias     string `json:"qosKeyAlias,omitempty"`
 }
 
 type Store struct {
@@ -558,12 +566,41 @@ func (s *Store) GetMonthlyUsage(ctx context.Context, username, model string, exe
 	if cached {
 		cachedLabel = "true"
 	}
+	// Allowed mirrors the final HasAccess decision for the enmaas_policy
+	// filter; keep this assignment in sync if HasAccess changes.
+	stats.Allowed = stats.HasAccess
+	// Model denial takes precedence: a permanently unauthorized model does
+	// not advertise a quota retry.
+	if !stats.ModelAllowed {
+		stats.DenyReason = "model_not_allowed"
+	} else if !stats.HasAccess {
+		stats.DenyReason = "quota_exhausted"
+		stats.QuotaRetryAfter = quotaRetryAfter(stats.MonthEnds)
+	}
+	if s.qosEnabled.Load() {
+		stats.QosKeyAlias = qosKeyAlias(stats.QosClass, s.qosConfig)
+	}
 	if stats.HasAccess {
 		metrics.QuotaChecksTotal.WithLabelValues("allowed", cachedLabel).Inc()
 	} else {
 		metrics.QuotaChecksTotal.WithLabelValues("denied", cachedLabel).Inc()
 	}
 	return stats, nil
+}
+
+func quotaRetryAfter(monthEnds string) int {
+	if monthEnds == "" {
+		return 3600
+	}
+	end, err := time.Parse(time.RFC3339, monthEnds)
+	if err != nil {
+		return 3600
+	}
+	seconds := int(time.Until(end).Seconds())
+	if seconds < 1 {
+		return 1
+	}
+	return seconds
 }
 
 // computeUsageStats derives entitlement stats from token usage and a quota.
