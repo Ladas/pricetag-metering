@@ -45,6 +45,12 @@ func TestPartnerUserDirectoryPolicyAndHistoricalUsage(t *testing.T) {
 			t.Fatalf("resolved policy for %s = %#v, err %v", username, resolved, err)
 		}
 	}
+	if _, err := s.PartnerUserByMaaSUsername(ctx, "alice@example.com"); !errors.Is(err, ErrPartnerUserNotFound) {
+		t.Fatalf("authentication lookup must reject retained login: %v", err)
+	}
+	if _, err := s.PartnerUserByMaaSUsername(ctx, "alice.new@example.com"); err != nil {
+		t.Fatalf("authentication lookup must accept current active login: %v", err)
+	}
 
 	from := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	to := from.Add(24 * time.Hour)
@@ -85,6 +91,15 @@ func TestPartnerUserDirectoryPolicyAndHistoricalUsage(t *testing.T) {
 	}
 	if err := s.RecordPartnerUserKey(ctx, "partner-m2m", id, "key-late", "alice.new@example.com", "late"); !errors.Is(err, ErrPartnerUserInactive) {
 		t.Fatalf("recording a key for a deactivated user = %v, want inactive", err)
+	}
+	for _, username := range []string{"alice@example.com", "alice.new@example.com"} {
+		if _, err := s.PartnerUserByMaaSUsername(ctx, username); !errors.Is(err, ErrPartnerUserNotFound) {
+			t.Fatalf("authentication lookup must reject inactive login %s: %v", username, err)
+		}
+		policy, err := s.GetUserModelAllowlist(ctx, username)
+		if err != nil || !policy.Enabled || len(policy.Models) != 0 {
+			t.Fatalf("inactive login %s must retain deny-all policy: %#v, %v", username, policy, err)
+		}
 	}
 	blocked, err := s.GetUserModelAllowlist(ctx, "alice@example.com")
 	if err != nil || !blocked.Enabled || len(blocked.Models) != 0 {
