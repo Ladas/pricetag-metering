@@ -323,7 +323,7 @@ func (h *AuthHandler) confirmSessionChange(w http.ResponseWriter, r *http.Reques
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method == http.MethodGet {
-		renderSessionConfirmation(w, r, title)
+		renderSessionConfirmation(w, r, title, h.sessionFormAction(r))
 		return false
 	}
 	if r.Method != http.MethodPost {
@@ -335,6 +335,22 @@ func (h *AuthHandler) confirmSessionChange(w http.ResponseWriter, r *http.Reques
 		return false
 	}
 	return true
+}
+
+// sessionFormAction permits the configured HTTPS issuer only for logout.
+// Browsers enforce form-action across the POST redirect to the end-session
+// endpoint. Never derive an allowed origin from Host or a request parameter.
+func (h *AuthHandler) sessionFormAction(r *http.Request) string {
+	action := "'self'"
+	if r.URL.Path != "/logout" || h.oidc == nil {
+		return action
+	}
+	target, err := url.Parse(h.oidc.endSessionURL)
+	if err != nil || target.Scheme != "https" || target.Hostname() == "" || target.User != nil ||
+		strings.ContainsAny(target.Host, "; \t\r\n") {
+		return action
+	}
+	return action + " https://" + target.Host
 }
 
 func (h *AuthHandler) HandleLogout(w http.ResponseWriter, r *http.Request) {

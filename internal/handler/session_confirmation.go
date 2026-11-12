@@ -11,7 +11,7 @@ import (
 
 var sessionConfirmation = template.Must(template.New("session-confirm").Parse(dashboard.SessionConfirmation))
 
-func renderSessionConfirmation(w http.ResponseWriter, r *http.Request, title string) {
+func renderSessionConfirmation(w http.ResponseWriter, r *http.Request, title, formAction string) {
 	target := strings.TrimSpace(r.URL.Query().Get("as"))
 	description := "Sign out of this browser session?"
 	readOnly := r.URL.Path == "/admin/impersonate" && target != ""
@@ -36,6 +36,6 @@ func renderSessionConfirmation(w http.ResponseWriter, r *http.Request, title str
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action "+formAction)
 	_, _ = w.Write(body.Bytes())
 }
